@@ -3,7 +3,7 @@ A helpful bot that crawls your PDF rules and helps answer questions from your pl
 
 ## Desktop UI
 
-The main executable uses goui to provide basic management features for the Game Master (GM).
+The main executable uses `gogpu/ui` to provide basic management features for the Game Master (GM).
 The GM can manage:
 
 * Adding and archiving Games.
