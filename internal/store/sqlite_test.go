@@ -59,7 +59,7 @@ func TestGamePDFTOCRoundTrip(t *testing.T) {
 		{PDFID: pdf.ID, Title: "Combat", StartPage: 29, EndPage: 54, SortOrder: 1},
 		{PDFID: pdf.ID, Title: "Downtime", StartPage: 90, EndPage: 95, SortOrder: 2, Optional: true},
 	}
-	if err := s.SaveTOCSections(pdf.ID, sections); err != nil {
+	if err := s.SaveTOCSections(pdf.ID, game.ID, sections); err != nil {
 		t.Fatalf("SaveTOCSections: %v", err)
 	}
 
@@ -145,13 +145,13 @@ func TestSaveTOCSectionsReplaceAll(t *testing.T) {
 		{Title: "A", StartPage: 1, EndPage: 2},
 		{Title: "B", StartPage: 3, EndPage: 4},
 	}
-	if err := s.SaveTOCSections(pdf.ID, first); err != nil {
+	if err := s.SaveTOCSections(pdf.ID, game.ID, first); err != nil {
 		t.Fatal(err)
 	}
 	second := []models.TOCSection{
 		{Title: "Only", StartPage: 10, EndPage: 11, Optional: true},
 	}
-	if err := s.SaveTOCSections(pdf.ID, second); err != nil {
+	if err := s.SaveTOCSections(pdf.ID, game.ID, second); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := s.ListTOCSections(pdf.ID)

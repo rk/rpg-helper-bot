@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS toc_sections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_toc_pdf ON toc_sections(pdf_id, sort_order);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pdfs_game_path ON pdfs(game_id, file_path);
 `
 	_, err := s.db.Exec(schema)
 	return err
@@ -242,44 +243,72 @@ func (s *SQLiteStore) AddPDF(p *models.PDF) error {
 	if err := ValidatePDF(*p, true); err != nil {
 		return err
 	}
+	existing, err := s.findPDFByGameAndPath(p.GameID, p.FilePath)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return fmt.Errorf("this game already includes %q", p.FilePath)
+	}
 	now := time.Now().UTC()
 	if p.ID == "" {
 		p.ID = uuid.NewString()
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 INSERT INTO pdfs (id, game_id, title, file_path, page_count, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)`, p.ID, p.GameID, p.Title, p.FilePath, p.PageCount, formatTime(p.CreatedAt), formatTime(p.UpdatedAt))
 	return err
 }
 
-func (s *SQLiteStore) UpdatePDF(p models.PDF) error {
+func (s *SQLiteStore) findPDFByGameAndPath(gameID, filePath string) (*models.PDF, error) {
+	row := s.db.QueryRow(`
+SELECT id, game_id, title, file_path, page_count, created_at, updated_at
+FROM pdfs WHERE game_id = ? AND file_path = ?`, gameID, filePath)
+	p, err := scanPDF(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *SQLiteStore) UpdatePDF(p models.PDF, gameID string) error {
 	if err := ValidatePDF(p, false); err != nil {
 		return err
+	}
+	existing, err := s.findPDFByGameAndPath(gameID, p.FilePath)
+	if err != nil {
+		return err
+	}
+	if existing != nil && existing.ID != p.ID {
+		return fmt.Errorf("this game already includes %q", p.FilePath)
 	}
 	p.UpdatedAt = time.Now().UTC()
 	res, err := s.db.Exec(`
 UPDATE pdfs SET title = ?, file_path = ?, page_count = ?, updated_at = ?
-WHERE id = ?`, p.Title, p.FilePath, p.PageCount, formatTime(p.UpdatedAt), p.ID)
+WHERE id = ? AND game_id = ?`, p.Title, p.FilePath, p.PageCount, formatTime(p.UpdatedAt), p.ID, gameID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("pdf not found")
+		return fmt.Errorf("pdf not found for this game")
 	}
 	return nil
 }
 
-func (s *SQLiteStore) RemovePDF(id string) error {
-	res, err := s.db.Exec(`DELETE FROM pdfs WHERE id = ?`, id)
+func (s *SQLiteStore) RemovePDF(id, gameID string) error {
+	res, err := s.db.Exec(`DELETE FROM pdfs WHERE id = ? AND game_id = ?`, id, gameID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("pdf not found")
+		return fmt.Errorf("pdf not found for this game")
 	}
 	return nil
 }
@@ -306,10 +335,11 @@ FROM toc_sections WHERE pdf_id = ? ORDER BY sort_order ASC`, pdfID)
 	return sections, rows.Err()
 }
 
-func (s *SQLiteStore) SaveTOCSections(pdfID string, sections []models.TOCSection) error {
+func (s *SQLiteStore) SaveTOCSections(pdfID, gameID string, sections []models.TOCSection) error {
 	var pageCount int
-	if err := s.db.QueryRow(`SELECT page_count FROM pdfs WHERE id = ?`, pdfID).Scan(&pageCount); err != nil {
-		return fmt.Errorf("pdf not found")
+	if err := s.db.QueryRow(`
+SELECT page_count FROM pdfs WHERE id = ? AND game_id = ?`, pdfID, gameID).Scan(&pageCount); err != nil {
+		return fmt.Errorf("pdf not found for this game")
 	}
 	if err := ValidateTOCSections(sections, pageCount); err != nil {
 		return err

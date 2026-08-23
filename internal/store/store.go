@@ -28,11 +28,11 @@ type Store interface {
 
 	ListPDFs(gameID string) ([]models.PDF, error)
 	AddPDF(p *models.PDF) error
-	UpdatePDF(p models.PDF) error
-	RemovePDF(id string) error
+	UpdatePDF(p models.PDF, gameID string) error
+	RemovePDF(id, gameID string) error
 
 	ListTOCSections(pdfID string) ([]models.TOCSection, error)
-	SaveTOCSections(pdfID string, sections []models.TOCSection) error
+	SaveTOCSections(pdfID, gameID string, sections []models.TOCSection) error
 
 	ListOptionalSections(gameID string) ([]OptionalSectionRef, error)
 	CountTOCSections(pdfID string) (total int, optional int, err error)

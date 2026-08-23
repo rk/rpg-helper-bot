@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,19 +19,21 @@ type Controller struct {
 
 	mu sync.Mutex
 
-	Filter           store.ListGamesFilter
-	Games            []models.Game
-	SelectedGame     *models.Game
-	PDFs             []models.PDF
-	PDFCounts        map[string]sectionCounts
-	SelectedPDF      *models.PDF
-	TOCSections      []models.TOCSection
-	OptionalRefs     []store.OptionalSectionRef
-	LastError        string
-	ReadOnly         bool
+	Filter       store.ListGamesFilter
+	Games        []models.Game
+	SelectedGame *models.Game
+	PDFs         []models.PDF
+	PDFCounts    map[string]sectionCounts
+	SelectedPDF  *models.PDF
+	TOCSections  []models.TOCSection
+	TOCDirty     bool
+	OptionalRefs []store.OptionalSectionRef
+	LastError    string
+	LastInfo     string
+	ReadOnly     bool
 
-	gameSaveTimer *time.Timer
-	tocSaveTimer  *time.Timer
+	// Unsaved new game draft (not yet in database).
+	DraftGame *models.Game
 
 	onChange func()
 }
@@ -63,11 +64,21 @@ func (c *Controller) Notify() {
 
 func (c *Controller) setError(err error) {
 	if err == nil {
-		c.LastError = ""
+		if c.LastError != "" {
+			c.LastError = ""
+			c.Notify()
+		}
 		return
 	}
 	c.LastError = err.Error()
+	c.LastInfo = ""
 	log.Printf("error: %v", err)
+	c.Notify()
+}
+
+func (c *Controller) setInfo(msg string) {
+	c.LastInfo = msg
+	c.LastError = ""
 	c.Notify()
 }
 
@@ -93,16 +104,37 @@ func (c *Controller) SelectGame(id string) {
 	if id == "" {
 		c.mu.Lock()
 		c.SelectedGame = nil
+		c.DraftGame = nil
 		c.PDFs = nil
 		c.PDFCounts = map[string]sectionCounts{}
 		c.SelectedPDF = nil
 		c.TOCSections = nil
+		c.TOCDirty = false
 		c.OptionalRefs = nil
 		c.ReadOnly = false
 		c.mu.Unlock()
+		c.setError(nil)
 		c.Notify()
 		return
 	}
+
+	c.mu.Lock()
+	if c.DraftGame != nil && c.DraftGame.ID == id {
+		game := *c.DraftGame
+		c.SelectedGame = &game
+		c.PDFs = nil
+		c.PDFCounts = map[string]sectionCounts{}
+		c.SelectedPDF = nil
+		c.TOCSections = nil
+		c.TOCDirty = false
+		c.OptionalRefs = nil
+		c.ReadOnly = false
+		c.mu.Unlock()
+		c.setError(nil)
+		c.Notify()
+		return
+	}
+	c.mu.Unlock()
 
 	game, err := c.Store.GetGame(id)
 	if err != nil {
@@ -130,6 +162,7 @@ func (c *Controller) SelectGame(id string) {
 	}
 
 	c.mu.Lock()
+	c.DraftGame = nil
 	c.SelectedGame = game
 	c.PDFs = pdfs
 	c.PDFCounts = counts
@@ -138,61 +171,89 @@ func (c *Controller) SelectGame(id string) {
 	if c.SelectedPDF != nil && c.SelectedPDF.GameID != id {
 		c.SelectedPDF = nil
 		c.TOCSections = nil
+		c.TOCDirty = false
 	}
 	c.mu.Unlock()
 	c.setError(nil)
 	c.Notify()
 }
 
-func (c *Controller) CreateGame() {
-	now := time.Now().UTC()
-	game := models.Game{
+func (c *Controller) BeginNewGame() {
+	now := timeNow()
+	draft := &models.Game{
 		ID:        uuid.NewString(),
 		Name:      "Untitled Game",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := c.Store.SaveGame(&game); err != nil {
-		c.setError(err)
-		return
-	}
-	c.RefreshGames()
-	c.SelectGame(game.ID)
+	c.mu.Lock()
+	c.DraftGame = draft
+	game := *draft
+	c.SelectedGame = &game
+	c.PDFs = nil
+	c.PDFCounts = map[string]sectionCounts{}
+	c.SelectedPDF = nil
+	c.TOCSections = nil
+	c.TOCDirty = false
+	c.OptionalRefs = nil
+	c.ReadOnly = false
+	c.mu.Unlock()
+	c.setInfo("New game draft — click Save Game to persist.")
+	c.Notify()
 }
 
-func (c *Controller) UpdateGameField(mutate func(*models.Game)) {
+func (c *Controller) SaveGame(name, notes, optIn string) error {
 	c.mu.Lock()
-	if c.SelectedGame == nil {
-		c.mu.Unlock()
-		return
-	}
-	game := *c.SelectedGame
+	game := c.SelectedGame
+	draft := c.DraftGame
+	readOnly := c.ReadOnly
 	c.mu.Unlock()
-	mutate(&game)
 
-	if c.gameSaveTimer != nil {
-		c.gameSaveTimer.Stop()
+	if game == nil || readOnly {
+		return fmt.Errorf("select an active game to save")
 	}
-	c.gameSaveTimer = time.AfterFunc(300*time.Millisecond, func() {
-		if err := c.Store.SaveGame(&game); err != nil {
+
+	saved := *game
+	saved.Name = strings.TrimSpace(name)
+	saved.Notes = notes
+	saved.OptionalRulesOptIn = optIn
+	if saved.Name == "" {
+		return fmt.Errorf("game name is required")
+	}
+
+	isDraft := draft != nil && draft.ID == saved.ID
+	if isDraft {
+		if err := c.Store.SaveGame(&saved); err != nil {
 			c.setError(err)
-			c.Notify()
-			return
+			return err
 		}
 		c.mu.Lock()
-		if c.SelectedGame != nil && c.SelectedGame.ID == game.ID {
-			c.SelectedGame = &game
-		}
+		c.DraftGame = nil
+		c.SelectedGame = &saved
 		c.mu.Unlock()
+		c.setInfo("Game saved.")
 		c.RefreshGames()
-		c.SelectGame(game.ID)
-	})
+		c.SelectGame(saved.ID)
+		return nil
+	}
+
+	if err := c.Store.SaveGame(&saved); err != nil {
+		c.setError(err)
+		return err
+	}
+	c.mu.Lock()
+	c.SelectedGame = &saved
+	c.mu.Unlock()
+	c.setInfo("Game saved.")
+	c.RefreshGames()
+	c.SelectGame(saved.ID)
+	return nil
 }
 
 func (c *Controller) ArchiveSelectedGame() {
 	c.mu.Lock()
 	id := ""
-	if c.SelectedGame != nil {
+	if c.SelectedGame != nil && c.DraftGame == nil {
 		id = c.SelectedGame.ID
 	}
 	c.mu.Unlock()
@@ -201,9 +262,9 @@ func (c *Controller) ArchiveSelectedGame() {
 	}
 	if err := c.Store.ArchiveGame(id); err != nil {
 		c.setError(err)
-		c.Notify()
 		return
 	}
+	c.setInfo("Game archived.")
 	c.RefreshGames()
 	c.SelectGame(id)
 }
@@ -220,9 +281,9 @@ func (c *Controller) RestoreSelectedGame() {
 	}
 	if err := c.Store.RestoreGame(id); err != nil {
 		c.setError(err)
-		c.Notify()
 		return
 	}
+	c.setInfo("Game restored.")
 	c.RefreshGames()
 	c.SelectGame(id)
 }
@@ -232,6 +293,7 @@ func (c *Controller) SelectPDF(id string) {
 		c.mu.Lock()
 		c.SelectedPDF = nil
 		c.TOCSections = nil
+		c.TOCDirty = false
 		c.mu.Unlock()
 		c.Notify()
 		return
@@ -239,8 +301,12 @@ func (c *Controller) SelectPDF(id string) {
 
 	c.mu.Lock()
 	var pdf *models.PDF
+	gameID := ""
+	if c.SelectedGame != nil {
+		gameID = c.SelectedGame.ID
+	}
 	for i := range c.PDFs {
-		if c.PDFs[i].ID == id {
+		if c.PDFs[i].ID == id && c.PDFs[i].GameID == gameID {
 			pdf = &c.PDFs[i]
 			break
 		}
@@ -253,62 +319,71 @@ func (c *Controller) SelectPDF(id string) {
 	sections, err := c.Store.ListTOCSections(id)
 	if err != nil {
 		c.setError(err)
-		c.Notify()
 		return
 	}
 
 	c.mu.Lock()
 	c.SelectedPDF = pdf
 	c.TOCSections = sections
+	c.TOCDirty = false
 	c.mu.Unlock()
 	c.setError(nil)
 	c.Notify()
 }
 
-func (c *Controller) AddPDF(filePath string) {
+func (c *Controller) SavePDF(title, filePath string) error {
 	c.mu.Lock()
 	game := c.SelectedGame
+	selected := c.SelectedPDF
 	readOnly := c.ReadOnly
+	draft := c.DraftGame
 	c.mu.Unlock()
-	if game == nil || readOnly {
-		return
+
+	if game == nil || readOnly || draft != nil {
+		return fmt.Errorf("save the game before adding PDFs")
 	}
 
-	title := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
-	now := time.Now().UTC()
-	pdf := models.PDF{
-		ID:        uuid.NewString(),
-		GameID:    game.ID,
-		Title:     title,
-		FilePath:  filePath,
-		CreatedAt: now,
-		UpdatedAt: now,
+	title = strings.TrimSpace(title)
+	filePath = strings.TrimSpace(filePath)
+	if title == "" {
+		return fmt.Errorf("pdf title is required")
 	}
-	if err := c.Store.AddPDF(&pdf); err != nil {
+	if filePath == "" {
+		return fmt.Errorf("pdf file path is required")
+	}
+
+	now := timeNow()
+	if selected == nil {
+		pdf := &models.PDF{
+			ID:        uuid.NewString(),
+			GameID:    game.ID,
+			Title:     title,
+			FilePath:  filePath,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := c.Store.AddPDF(pdf); err != nil {
+			c.setError(err)
+			return err
+		}
+		c.setInfo("PDF added.")
+		c.SelectGame(game.ID)
+		c.SelectPDF(pdf.ID)
+		return nil
+	}
+
+	pdf := *selected
+	pdf.Title = title
+	pdf.FilePath = filePath
+	pdf.UpdatedAt = now
+	if err := c.Store.UpdatePDF(pdf, game.ID); err != nil {
 		c.setError(err)
-		c.Notify()
-		return
+		return err
 	}
+	c.setInfo("PDF saved.")
 	c.SelectGame(game.ID)
 	c.SelectPDF(pdf.ID)
-}
-
-func (c *Controller) UpdatePDFTitle(title string) {
-	c.mu.Lock()
-	if c.SelectedPDF == nil || c.ReadOnly {
-		c.mu.Unlock()
-		return
-	}
-	pdf := *c.SelectedPDF
-	c.mu.Unlock()
-	pdf.Title = title
-	if err := c.Store.UpdatePDF(pdf); err != nil {
-		c.setError(err)
-		c.Notify()
-		return
-	}
-	c.SelectGame(pdf.GameID)
-	c.SelectPDF(pdf.ID)
+	return nil
 }
 
 func (c *Controller) RemovePDF(id string) {
@@ -322,11 +397,11 @@ func (c *Controller) RemovePDF(id string) {
 	if gameID == "" || readOnly {
 		return
 	}
-	if err := c.Store.RemovePDF(id); err != nil {
+	if err := c.Store.RemovePDF(id, gameID); err != nil {
 		c.setError(err)
-		c.Notify()
 		return
 	}
+	c.setInfo("PDF removed.")
 	c.SelectGame(gameID)
 }
 
@@ -334,21 +409,21 @@ func (c *Controller) AddTOCSection() {
 	c.mu.Lock()
 	if c.SelectedPDF == nil || c.ReadOnly {
 		c.mu.Unlock()
+		c.setError(fmt.Errorf("select a PDF before adding sections"))
 		return
 	}
-	pdfID := c.SelectedPDF.ID
-	sections := append([]models.TOCSection{}, c.TOCSections...)
-	c.mu.Unlock()
-
-	sections = append(sections, models.TOCSection{
+	c.TOCSections = append(c.TOCSections, models.TOCSection{
 		ID:        uuid.NewString(),
-		PDFID:     pdfID,
+		PDFID:     c.SelectedPDF.ID,
 		Title:     "",
 		StartPage: 1,
 		EndPage:   1,
-		SortOrder: len(sections),
+		SortOrder: len(c.TOCSections),
 	})
-	c.setTOCSections(pdfID, sections, true)
+	c.TOCDirty = true
+	c.mu.Unlock()
+	c.setInfo("Section added — click Save Sections when ready.")
+	c.Notify()
 }
 
 func (c *Controller) UpdateTOCSection(index int, mutate func(*models.TOCSection)) {
@@ -357,12 +432,10 @@ func (c *Controller) UpdateTOCSection(index int, mutate func(*models.TOCSection)
 		c.mu.Unlock()
 		return
 	}
-	pdfID := c.SelectedPDF.ID
-	sections := append([]models.TOCSection{}, c.TOCSections...)
+	mutate(&c.TOCSections[index])
+	c.TOCDirty = true
 	c.mu.Unlock()
-
-	mutate(&sections[index])
-	c.setTOCSections(pdfID, sections, true)
+	c.Notify()
 }
 
 func (c *Controller) MoveTOCSection(index, delta int) {
@@ -371,16 +444,15 @@ func (c *Controller) MoveTOCSection(index, delta int) {
 		c.mu.Unlock()
 		return
 	}
-	pdfID := c.SelectedPDF.ID
-	sections := append([]models.TOCSection{}, c.TOCSections...)
-	c.mu.Unlock()
-
 	newIndex := index + delta
-	if index < 0 || index >= len(sections) || newIndex < 0 || newIndex >= len(sections) {
+	if index < 0 || index >= len(c.TOCSections) || newIndex < 0 || newIndex >= len(c.TOCSections) {
+		c.mu.Unlock()
 		return
 	}
-	sections[index], sections[newIndex] = sections[newIndex], sections[index]
-	c.setTOCSections(pdfID, sections, true)
+	c.TOCSections[index], c.TOCSections[newIndex] = c.TOCSections[newIndex], c.TOCSections[index]
+	c.TOCDirty = true
+	c.mu.Unlock()
+	c.Notify()
 }
 
 func (c *Controller) RemoveTOCSection(index int) {
@@ -389,44 +461,84 @@ func (c *Controller) RemoveTOCSection(index int) {
 		c.mu.Unlock()
 		return
 	}
-	pdfID := c.SelectedPDF.ID
-	sections := append([]models.TOCSection{}, c.TOCSections...)
+	c.TOCSections = append(c.TOCSections[:index], c.TOCSections[index+1:]...)
+	c.TOCDirty = true
 	c.mu.Unlock()
-
-	sections = append(sections[:index], sections[index+1:]...)
-	c.setTOCSections(pdfID, sections, true)
+	c.Notify()
 }
 
-func (c *Controller) setTOCSections(pdfID string, sections []models.TOCSection, debounce bool) {
+func (c *Controller) SaveTOCSectionsNow() error {
 	c.mu.Lock()
-	c.TOCSections = sections
+	pdf := c.SelectedPDF
+	sections := append([]models.TOCSection{}, c.TOCSections...)
 	gameID := ""
 	if c.SelectedGame != nil {
 		gameID = c.SelectedGame.ID
 	}
+	readOnly := c.ReadOnly
 	c.mu.Unlock()
-	c.Notify()
 
-	save := func() {
-		if err := c.Store.SaveTOCSections(pdfID, sections); err != nil {
-			c.setError(err)
-			c.Notify()
-			return
-		}
-		if gameID != "" {
-			c.SelectGame(gameID)
-		}
-		c.SelectPDF(pdfID)
+	if pdf == nil || readOnly {
+		return fmt.Errorf("select a PDF to save sections")
 	}
 
-	if !debounce {
-		save()
-		return
+	if err := c.Store.SaveTOCSections(pdf.ID, pdf.GameID, sections); err != nil {
+		c.setError(err)
+		return err
 	}
-	if c.tocSaveTimer != nil {
-		c.tocSaveTimer.Stop()
+
+	c.mu.Lock()
+	c.TOCDirty = false
+	c.mu.Unlock()
+	c.setInfo("Sections saved.")
+	if gameID != "" {
+		c.SelectGame(gameID)
 	}
-	c.tocSaveTimer = time.AfterFunc(300*time.Millisecond, save)
+	c.SelectPDF(pdf.ID)
+	return nil
+}
+
+func (c *Controller) GameListCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := len(c.Games)
+	if c.DraftGame != nil {
+		found := false
+		for _, g := range c.Games {
+			if g.ID == c.DraftGame.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *Controller) GameAt(index int) (models.Game, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.DraftGame != nil {
+		found := false
+		for _, g := range c.Games {
+			if g.ID == c.DraftGame.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if index == 0 {
+				return *c.DraftGame, true
+			}
+			index--
+		}
+	}
+	if index < 0 || index >= len(c.Games) {
+		return models.Game{}, false
+	}
+	return c.Games[index], true
 }
 
 func ParsePageValue(s string) (int, error) {
@@ -444,4 +556,8 @@ func ParsePageValue(s string) (int, error) {
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func timeNow() time.Time {
+	return time.Now().UTC()
 }
