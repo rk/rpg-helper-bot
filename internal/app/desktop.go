@@ -105,13 +105,33 @@ func (v *visibleTab) activeChild() widget.Widget {
 	return v.games
 }
 
+func setWidgetVisible(w widget.Widget, visible bool) {
+	if vc, ok := w.(interface{ SetVisible(bool) }); ok {
+		vc.SetVisible(visible)
+	}
+}
+
+func widgetIsVisible(w widget.Widget) bool {
+	if vc, ok := w.(interface{ IsVisible() bool }); ok {
+		return vc.IsVisible()
+	}
+	return true
+}
+
 func (v *visibleTab) Layout(ctx widget.Context, constraints geometry.Constraints) geometry.Size {
 	size := constraints.Constrain(geometry.Sz(constraints.MaxWidth, constraints.MaxHeight))
+	active := v.active.Get()
+	setWidgetVisible(v.games, active == 0)
+	setWidgetVisible(v.library, active == 1)
+
 	child := v.activeChild()
 	if child != nil {
 		widget.LayoutChild(child, ctx, geometry.Tight(size))
 		if setter, ok := child.(interface{ SetBounds(geometry.Rect) }); ok {
 			setter.SetBounds(geometry.NewRect(0, 0, size.Width, size.Height))
+		}
+		if redraw, ok := child.(interface{ SetNeedsRedraw(bool) }); ok {
+			redraw.SetNeedsRedraw(true)
 		}
 	}
 	return size
@@ -122,13 +142,13 @@ func (v *visibleTab) Draw(ctx widget.Context, canvas widget.Canvas) {
 		return
 	}
 	child := v.activeChild()
-	if child == nil {
+	if child == nil || !widgetIsVisible(child) {
 		return
 	}
 	bounds := v.Bounds()
 	canvas.PushTransform(bounds.Min)
 	widget.StampScreenOrigin(child, canvas)
-	widget.DrawChild(child, ctx, canvas)
+	child.Draw(ctx, canvas)
 	canvas.PopTransform()
 }
 
@@ -167,26 +187,19 @@ func (v *visibleTab) Event(ctx widget.Context, e event.Event) bool {
 }
 
 func (v *visibleTab) Children() []widget.Widget {
-	child := v.activeChild()
-	if child == nil {
-		return nil
-	}
-	return []widget.Widget{child}
+	return []widget.Widget{v.games, v.library}
 }
 
 func (v *visibleTab) Mount(ctx widget.Context) {
 	sched := ctx.Scheduler()
-	if sched == nil {
-		return
+	if sched != nil {
+		b := state.BindToSchedulerLayout(v.active, v, sched)
+		v.AddBinding(b)
 	}
-	b := state.BindToSchedulerLayout(v.active, v, sched)
-	v.AddBinding(b)
-	if lc, ok := v.games.(widget.Lifecycle); ok {
-		lc.Mount(ctx)
-	}
-	if lc, ok := v.library.(widget.Lifecycle); ok {
-		lc.Mount(ctx)
-	}
+	// Mount both subtrees up front. Children() exposes both for MountTree walks;
+	// Layout/Draw still show only the active tab.
+	widget.MountTree(v.games, ctx)
+	widget.MountTree(v.library, ctx)
 }
 
 func (d *Desktop) scrollContent(content widget.Widget) widget.Widget {
