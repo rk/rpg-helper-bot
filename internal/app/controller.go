@@ -197,6 +197,7 @@ func (c *Controller) BeginNewGame() {
 	c.OptionalRefs = nil
 	c.GameReadOnly = false
 	c.mu.Unlock()
+	c.setError(nil)
 	c.setInfo("New game draft — click Save Game to persist.")
 	c.Notify()
 }
@@ -384,6 +385,7 @@ func (c *Controller) BeginNewLibraryPDF() {
 	c.TOCSections = nil
 	c.TOCDirty = false
 	c.mu.Unlock()
+	c.setError(nil)
 	c.setInfo("New PDF draft — set path and click Save PDF.")
 	c.Notify()
 }
@@ -438,12 +440,12 @@ func (c *Controller) DeleteLibraryPDF(id string) {
 	c.RefreshLibrary()
 }
 
-func (c *Controller) AddTOCSection() {
+func (c *Controller) AddTOCSection() int {
 	c.mu.Lock()
 	if c.SelectedLibraryPDF == nil {
 		c.mu.Unlock()
 		c.setError(fmt.Errorf("select a PDF before adding sections"))
-		return
+		return -1
 	}
 	pdfID := c.SelectedLibraryPDF.ID
 	c.TOCSections = append(c.TOCSections, models.TOCSection{
@@ -454,10 +456,12 @@ func (c *Controller) AddTOCSection() {
 		EndPage:   1,
 		SortOrder: len(c.TOCSections),
 	})
+	newIndex := len(c.TOCSections) - 1
 	c.TOCDirty = true
 	c.mu.Unlock()
-	c.setInfo("Section added — click Save Sections when ready.")
+	c.setInfo("Section added — edit details below, then click Save Sections.")
 	c.Notify()
+	return newIndex
 }
 
 func (c *Controller) UpdateTOCSection(index int, mutate func(*models.TOCSection)) {
@@ -588,6 +592,94 @@ func (c *Controller) LibraryListCount() int {
 		}
 	}
 	return n
+}
+
+func (c *Controller) GameIndexForID(id string) int {
+	if id == "" {
+		return -1
+	}
+	for i := 0; i < c.GameListCount(); i++ {
+		game, ok := c.GameAt(i)
+		if ok && game.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *Controller) LibraryIndexForID(id string) int {
+	if id == "" {
+		return -1
+	}
+	for i := 0; i < c.LibraryListCount(); i++ {
+		pdf, _, ok := c.LibraryPDFAt(i)
+		if ok && pdf.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *Controller) AttachablePDFCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, pdf := range c.LibraryPDFs {
+		if !c.isPDFAttachedLocked(pdf.ID) {
+			n++
+		}
+	}
+	if c.DraftLibraryPDF != nil {
+		found := false
+		for _, p := range c.LibraryPDFs {
+			if p.ID == c.DraftLibraryPDF.ID {
+				found = true
+				break
+			}
+		}
+		if !found && !c.isPDFAttachedLocked(c.DraftLibraryPDF.ID) {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *Controller) AttachablePDFAt(index int) (models.PDF, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, pdf := range c.LibraryPDFs {
+		if c.isPDFAttachedLocked(pdf.ID) {
+			continue
+		}
+		if index == 0 {
+			return pdf, true
+		}
+		index--
+	}
+	if c.DraftLibraryPDF != nil {
+		found := false
+		for _, p := range c.LibraryPDFs {
+			if p.ID == c.DraftLibraryPDF.ID {
+				found = true
+				break
+			}
+		}
+		if !found && !c.isPDFAttachedLocked(c.DraftLibraryPDF.ID) {
+			if index == 0 {
+				return *c.DraftLibraryPDF, true
+			}
+		}
+	}
+	return models.PDF{}, false
+}
+
+func (c *Controller) isPDFAttachedLocked(pdfID string) bool {
+	for _, p := range c.AttachedPDFs {
+		if p.ID == pdfID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) LibraryPDFAt(index int) (models.PDF, sectionCounts, bool) {
