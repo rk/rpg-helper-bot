@@ -17,9 +17,11 @@ import (
 	"github.com/gogpu/ui/core/dialog"
 	"github.com/gogpu/ui/core/dropdown"
 	"github.com/gogpu/ui/core/listview"
-	"github.com/gogpu/ui/core/tabview"
+	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/desktop"
+	"github.com/gogpu/ui/event"
+	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/theme/material3"
@@ -64,6 +66,8 @@ type Desktop struct {
 	loadedPDFID    string
 	loadedTOCForPDF string
 	loadedTOCIndex int
+
+	activeTab state.Signal[int]
 }
 
 type desktopPainters struct {
@@ -72,7 +76,125 @@ type desktopPainters struct {
 	textfield material3.TextFieldPainter
 	dropdown  material3.DropdownPainter
 	datatable material3.DataTablePainter
-	tabview   material3.TabViewPainter
+}
+
+// visibleTab shows exactly one tab root at a time so inactive tabs are not
+// laid out, drawn, or traversed in the widget tree.
+type visibleTab struct {
+	widget.WidgetBase
+	games   widget.Widget
+	library widget.Widget
+	active  state.Signal[int]
+}
+
+func newVisibleTab(games, library widget.Widget, active state.Signal[int]) *visibleTab {
+	v := &visibleTab{
+		games:   games,
+		library: library,
+		active:  active,
+	}
+	v.SetVisible(true)
+	v.SetEnabled(true)
+	return v
+}
+
+func (v *visibleTab) activeChild() widget.Widget {
+	if v.active.Get() == 1 {
+		return v.library
+	}
+	return v.games
+}
+
+func (v *visibleTab) Layout(ctx widget.Context, constraints geometry.Constraints) geometry.Size {
+	size := constraints.Constrain(geometry.Sz(constraints.MaxWidth, constraints.MaxHeight))
+	child := v.activeChild()
+	if child != nil {
+		widget.LayoutChild(child, ctx, geometry.Tight(size))
+		if setter, ok := child.(interface{ SetBounds(geometry.Rect) }); ok {
+			setter.SetBounds(geometry.NewRect(0, 0, size.Width, size.Height))
+		}
+	}
+	return size
+}
+
+func (v *visibleTab) Draw(ctx widget.Context, canvas widget.Canvas) {
+	if !v.IsVisible() {
+		return
+	}
+	child := v.activeChild()
+	if child == nil {
+		return
+	}
+	bounds := v.Bounds()
+	canvas.PushTransform(bounds.Min)
+	widget.StampScreenOrigin(child, canvas)
+	widget.DrawChild(child, ctx, canvas)
+	canvas.PopTransform()
+}
+
+func (v *visibleTab) Event(ctx widget.Context, e event.Event) bool {
+	if !v.IsVisible() || !v.IsEnabled() {
+		return false
+	}
+	child := v.activeChild()
+	if child == nil {
+		return false
+	}
+
+	if me, ok := e.(*event.MouseEvent); ok {
+		local := *me
+		local.Position = me.Position.Sub(v.Bounds().Min)
+		if bw, ok := child.(interface{ Bounds() geometry.Rect }); ok {
+			if !bw.Bounds().Contains(local.Position) {
+				return false
+			}
+		}
+		return child.Event(ctx, &local)
+	}
+
+	if we, ok := e.(*event.WheelEvent); ok {
+		local := *we
+		local.Position = we.Position.Sub(v.Bounds().Min)
+		if bw, ok := child.(interface{ Bounds() geometry.Rect }); ok {
+			if !bw.Bounds().Contains(local.Position) {
+				return false
+			}
+		}
+		return child.Event(ctx, &local)
+	}
+
+	return child.Event(ctx, e)
+}
+
+func (v *visibleTab) Children() []widget.Widget {
+	child := v.activeChild()
+	if child == nil {
+		return nil
+	}
+	return []widget.Widget{child}
+}
+
+func (v *visibleTab) Mount(ctx widget.Context) {
+	sched := ctx.Scheduler()
+	if sched == nil {
+		return
+	}
+	b := state.BindToSchedulerLayout(v.active, v, sched)
+	v.AddBinding(b)
+	if lc, ok := v.games.(widget.Lifecycle); ok {
+		lc.Mount(ctx)
+	}
+	if lc, ok := v.library.(widget.Lifecycle); ok {
+		lc.Mount(ctx)
+	}
+}
+
+func (d *Desktop) scrollContent(content widget.Widget) widget.Widget {
+	return scrollview.New(
+		content,
+		scrollview.DirectionOpt(scrollview.Vertical),
+		scrollview.ScrollbarOpt(scrollview.ScrollbarAuto),
+	)
 }
 
 func Run(ctrl *Controller) error {
@@ -91,7 +213,6 @@ func Run(ctrl *Controller) error {
 			textfield: material3.TextFieldPainter{Theme: m3},
 			dropdown:  material3.DropdownPainter{Theme: m3},
 			datatable: material3.DataTablePainter{Theme: m3},
-			tabview:   material3.TabViewPainter{Theme: m3},
 		},
 		gamesVersion:       state.NewSignal(0),
 		libraryVersion:     state.NewSignal(0),
@@ -114,6 +235,7 @@ func Run(ctrl *Controller) error {
 		sectionEndSignal:      state.NewSignal("1"),
 		sectionOptionalSignal: state.NewSignal(false),
 		loadedTOCIndex:        -1,
+		activeTab:             state.NewSignal(0),
 	}
 
 	uiApp := app.New(
@@ -290,22 +412,37 @@ func (d *Desktop) ctx() widget.Context {
 
 func (d *Desktop) buildRoot() widget.Widget {
 	status := d.buildStatusBar()
-
-	tabs := tabview.New(
-		[]tabview.Tab{
-			{Label: "Games", Content: d.buildGamesTab()},
-			{Label: "PDF Library", Content: d.buildPDFLibraryTab()},
-		},
-		tabview.PainterOpt(d.painters.tabview),
+	tabContent := newVisibleTab(
+		d.buildGamesTab(),
+		d.buildPDFLibraryTab(),
+		d.activeTab,
 	)
 
 	return primitives.VBox(
 		primitives.Box(
 			primitives.Text("RPG Helper Bot").FontSize(20).Bold(),
 		).Padding(12).Background(widget.RGBA8(245, 245, 245, 255)),
-		primitives.Expanded(tabs),
+		d.buildTabBar(),
+		primitives.Expanded(tabContent),
 		status,
 	).Background(widget.RGBA8(250, 250, 250, 255))
+}
+
+func (d *Desktop) buildTabBar() widget.Widget {
+	return primitives.HBox(
+		button.New(
+			button.TextOpt("Games"),
+			button.OnClick(func() { d.activeTab.Set(0) }),
+			button.PainterOpt(d.painters.button),
+			button.VariantOpt(button.Tonal),
+		),
+		button.New(
+			button.TextOpt("PDF Library"),
+			button.OnClick(func() { d.activeTab.Set(1) }),
+			button.PainterOpt(d.painters.button),
+			button.VariantOpt(button.Tonal),
+		),
+	).Padding(8).Gap(8).Background(widget.RGBA8(245, 245, 245, 255))
 }
 
 func (d *Desktop) buildStatusBar() widget.Widget {
@@ -346,7 +483,7 @@ func (d *Desktop) buildGamesTab() widget.Widget {
 		primitives.Expanded(primitives.HBox(
 			d.buildGameListPane(),
 			primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
-			primitives.Expanded(d.buildGameDetailPane()),
+			primitives.Expanded(d.scrollContent(d.buildGameDetailPane())),
 		)),
 	).Gap(0)
 }
@@ -368,7 +505,7 @@ func (d *Desktop) buildPDFLibraryTab() widget.Widget {
 		primitives.Expanded(primitives.HBox(
 			d.buildLibraryListPane(),
 			primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
-			primitives.Expanded(d.buildLibraryEditorPane()),
+			primitives.Expanded(d.scrollContent(d.buildLibraryEditorPane())),
 		)),
 	).Gap(0)
 }
@@ -858,7 +995,6 @@ func (d *Desktop) buildLibraryEditorPane() widget.Widget {
 		primitives.HBox(browseBtn, savePDFBtn, deleteBtn).Gap(8),
 		components.Label("Table of contents"),
 		primitives.HBox(addSectionBtn, saveSectionsBtn).Gap(8),
-		primitives.Box(tocList).Height(180),
 		components.Label("Section editor"),
 		sectionOptionalCheckbox,
 		components.Label("Title"),
@@ -870,6 +1006,8 @@ func (d *Desktop) buildLibraryEditorPane() widget.Widget {
 			sectionEndField,
 		).Gap(8),
 		sectionActions,
+		components.Label("Sections"),
+		primitives.Box(tocList).Height(180),
 	).Padding(12).Gap(8)
 }
 
