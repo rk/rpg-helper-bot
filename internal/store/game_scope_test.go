@@ -8,7 +8,7 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 )
 
-func TestPDFScopedToGame(t *testing.T) {
+func TestPDFLibrarySharedAcrossGames(t *testing.T) {
 	s, _ := openTestStore(t)
 
 	gameA := models.Game{Name: "Game A"}
@@ -25,34 +25,43 @@ func TestPDFScopedToGame(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pdfA := models.PDF{GameID: gameA.ID, Title: "Rules A", FilePath: pdfPath}
-	if err := s.AddPDF(&pdfA); err != nil {
+	pdf := models.PDF{Title: "Shared Rules", FilePath: pdfPath}
+	if err := s.SavePDF(&pdf); err != nil {
 		t.Fatal(err)
 	}
-	pdfB := models.PDF{GameID: gameB.ID, Title: "Rules B", FilePath: pdfPath}
-	if err := s.AddPDF(&pdfB); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.SaveTOCSections(pdfA.ID, gameA.ID, []models.TOCSection{
+	if err := s.SaveTOCSections(pdf.ID, []models.TOCSection{
 		{Title: "Combat", StartPage: 1, EndPage: 2},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	sectionsB, err := s.ListTOCSections(pdfB.ID)
+	if err := s.AttachPDFToGame(gameA.ID, pdf.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AttachPDFToGame(gameB.ID, pdf.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	attachedA, err := s.ListGamePDFs(gameA.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sectionsB) != 0 {
-		t.Fatalf("expected independent TOC per game PDF, got %+v", sectionsB)
+	if len(attachedA) != 1 || attachedA[0].ID != pdf.ID {
+		t.Fatalf("game A attachments: %+v", attachedA)
 	}
 
-	if err := s.AddPDF(&models.PDF{GameID: gameA.ID, Title: "Dup", FilePath: pdfPath}); err == nil {
-		t.Fatal("expected duplicate path on same game to fail")
+	if err := s.DetachPDFFromGame(gameA.ID, pdf.ID); err != nil {
+		t.Fatal(err)
+	}
+	attachedB, err := s.ListGamePDFs(gameB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attachedB) != 1 {
+		t.Fatalf("game B should still have pdf attached, got %+v", attachedB)
 	}
 
-	if err := s.RemovePDF(pdfA.ID, gameB.ID); err == nil {
-		t.Fatal("expected remove with wrong game to fail")
+	if err := s.DeletePDF(pdf.ID); err == nil {
+		t.Fatal("expected delete to fail while attached to game B")
 	}
 }

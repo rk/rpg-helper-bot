@@ -17,7 +17,7 @@ import (
 	"github.com/gogpu/ui/core/dialog"
 	"github.com/gogpu/ui/core/dropdown"
 	"github.com/gogpu/ui/core/listview"
-	"github.com/gogpu/ui/core/scrollview"
+	"github.com/gogpu/ui/core/tabview"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/primitives"
@@ -37,7 +37,7 @@ type Desktop struct {
 	painters desktopPainters
 
 	gamesVersion       state.Signal[int]
-	pdfVersion         state.Signal[int]
+	libraryVersion     state.Signal[int]
 	tocVersion         state.Signal[int]
 	optionalRefVersion state.Signal[int]
 	statusVersion      state.Signal[int]
@@ -48,8 +48,8 @@ type Desktop struct {
 	pdfTitleSignal  state.Signal[string]
 	pdfPathSignal   state.Signal[string]
 
-	loadedGameID string
-	loadedPDFID  string
+	loadedGameID   string
+	loadedPDFID    string
 }
 
 type desktopPainters struct {
@@ -58,6 +58,7 @@ type desktopPainters struct {
 	textfield material3.TextFieldPainter
 	dropdown  material3.DropdownPainter
 	datatable material3.DataTablePainter
+	tabview   material3.TabViewPainter
 }
 
 func Run(ctrl *Controller) error {
@@ -76,9 +77,10 @@ func Run(ctrl *Controller) error {
 			textfield: material3.TextFieldPainter{Theme: m3},
 			dropdown:  material3.DropdownPainter{Theme: m3},
 			datatable: material3.DataTablePainter{Theme: m3},
+			tabview:   material3.TabViewPainter{Theme: m3},
 		},
 		gamesVersion:       state.NewSignal(0),
-		pdfVersion:         state.NewSignal(0),
+		libraryVersion:     state.NewSignal(0),
 		tocVersion:         state.NewSignal(0),
 		optionalRefVersion: state.NewSignal(0),
 		statusVersion:      state.NewSignal(0),
@@ -99,7 +101,7 @@ func Run(ctrl *Controller) error {
 
 	ctrl.SetOnChange(func() {
 		d.gamesVersion.Set(d.gamesVersion.Get() + 1)
-		d.pdfVersion.Set(d.pdfVersion.Get() + 1)
+		d.libraryVersion.Set(d.libraryVersion.Get() + 1)
 		d.tocVersion.Set(d.tocVersion.Get() + 1)
 		d.optionalRefVersion.Set(d.optionalRefVersion.Get() + 1)
 		d.statusVersion.Set(d.statusVersion.Get() + 1)
@@ -107,6 +109,7 @@ func Run(ctrl *Controller) error {
 	})
 
 	ctrl.RefreshGames()
+	ctrl.RefreshLibrary()
 	uiApp.SetRoot(d.buildRoot())
 	return desktop.Run(gogpuApp, uiApp)
 }
@@ -118,11 +121,11 @@ func (d *Desktop) reloadFormsIfSelectionChanged() {
 	if d.ctrl.SelectedGame != nil {
 		gameID = d.ctrl.SelectedGame.ID
 	}
-	if d.ctrl.SelectedPDF != nil {
-		pdfID = d.ctrl.SelectedPDF.ID
+	if d.ctrl.SelectedLibraryPDF != nil {
+		pdfID = d.ctrl.SelectedLibraryPDF.ID
 	}
 	game := d.ctrl.SelectedGame
-	pdf := d.ctrl.SelectedPDF
+	pdf := d.ctrl.SelectedLibraryPDF
 	d.ctrl.mu.Unlock()
 
 	if gameID != d.loadedGameID {
@@ -155,27 +158,27 @@ func (d *Desktop) ctx() widget.Context {
 }
 
 func (d *Desktop) buildRoot() widget.Widget {
-	header := primitives.HBox(
-		primitives.Text("RPG Helper Bot").FontSize(20).Bold(),
-		primitives.Expanded(primitives.Box()),
-		d.buildFilterDropdown(),
-		button.New(
-			button.TextOpt("+ New Game"),
-			button.OnClick(func() { d.ctrl.BeginNewGame() }),
-			button.PainterOpt(d.painters.button),
-			button.VariantOpt(button.Filled),
-		),
-	).Padding(12).Gap(12).Background(widget.RGBA8(245, 245, 245, 255))
+	status := d.buildStatusBar()
 
-	body := primitives.HBox(
-		d.buildGameListPane(),
-		primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
-		primitives.Expanded(d.buildGameDetailPane()),
-		primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
-		primitives.Expanded(d.buildPDFPane()),
+	tabs := tabview.New(
+		[]tabview.Tab{
+			{Label: "Games", Content: d.buildGamesTab()},
+			{Label: "PDF Library", Content: d.buildPDFLibraryTab()},
+		},
+		tabview.PainterOpt(d.painters.tabview),
+	)
+
+	return primitives.VBox(
+		primitives.Box(
+			primitives.Text("RPG Helper Bot").FontSize(20).Bold(),
+		).Padding(12).Background(widget.RGBA8(245, 245, 245, 255)),
+		primitives.Expanded(tabs),
+		status,
 	).Background(widget.RGBA8(250, 250, 250, 255))
+}
 
-	status := primitives.HBox(
+func (d *Desktop) buildStatusBar() widget.Widget {
+	return primitives.HBox(
 		primitives.Text("").ContentSignal(state.NewComputed(func() string {
 			_ = d.statusVersion.Get()
 			if d.ctrl.LastError != "" {
@@ -193,8 +196,50 @@ func (d *Desktop) buildRoot() widget.Widget {
 			return "Ready"
 		})),
 	).Padding(8).Background(widget.RGBA8(240, 240, 240, 255))
+}
 
-	return primitives.VBox(header, primitives.Expanded(body), status)
+func (d *Desktop) buildGamesTab() widget.Widget {
+	header := primitives.HBox(
+		d.buildFilterDropdown(),
+		primitives.Expanded(primitives.Box()),
+		button.New(
+			button.TextOpt("+ New Game"),
+			button.OnClick(func() { d.ctrl.BeginNewGame() }),
+			button.PainterOpt(d.painters.button),
+			button.VariantOpt(button.Filled),
+		),
+	).Padding(8).Gap(8)
+
+	return primitives.VBox(
+		header,
+		primitives.Expanded(primitives.HBox(
+			d.buildGameListPane(),
+			primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
+			primitives.Expanded(d.buildGameDetailPane()),
+		)),
+	).Gap(0)
+}
+
+func (d *Desktop) buildPDFLibraryTab() widget.Widget {
+	header := primitives.HBox(
+		components.Label("Configure PDFs once, then attach them to games"),
+		primitives.Expanded(primitives.Box()),
+		button.New(
+			button.TextOpt("+ New PDF"),
+			button.OnClick(func() { d.ctrl.BeginNewLibraryPDF() }),
+			button.PainterOpt(d.painters.button),
+			button.VariantOpt(button.Filled),
+		),
+	).Padding(8).Gap(8)
+
+	return primitives.VBox(
+		header,
+		primitives.Expanded(primitives.HBox(
+			d.buildLibraryListPane(),
+			primitives.Box().Width(1).Background(widget.RGBA8(220, 220, 220, 255)),
+			primitives.Expanded(d.buildLibraryEditorPane()),
+		)),
+	).Gap(0)
 }
 
 func (d *Desktop) buildFilterDropdown() widget.Widget {
@@ -222,14 +267,12 @@ func (d *Desktop) buildGameListPane() widget.Widget {
 			return d.ctrl.GameListCount()
 		}),
 		listview.FixedItemHeight(44),
-		listview.SelectionModeOpt(listview.SelectionSingle),
 		listview.BuildItem(func(ctx listview.ItemContext) widget.Widget {
 			_ = d.gamesVersion.Get()
 			game, ok := d.ctrl.GameAt(ctx.Index)
 			if !ok {
-				return primitives.Box()
+				return listRowText("(empty)")
 			}
-
 			label := game.Name
 			d.ctrl.mu.Lock()
 			isDraft := d.ctrl.DraftGame != nil && d.ctrl.DraftGame.ID == game.ID
@@ -240,20 +283,13 @@ func (d *Desktop) buildGameListPane() widget.Widget {
 			if game.Archived {
 				label += " (Archived)"
 			}
-			color := widget.RGBA8(30, 30, 30, 255)
-			if game.Archived || isDraft {
-				color = widget.RGBA8(120, 120, 120, 255)
-			}
-			return primitives.Box(
-				primitives.Text(label).FontSize(14).Color(color),
-			).Padding(12)
+			return listRowText(label)
 		}),
 		listview.OnItemClick(func(index int) {
 			game, ok := d.ctrl.GameAt(index)
-			if !ok {
-				return
+			if ok {
+				d.ctrl.SelectGame(game.ID)
 			}
-			d.ctrl.SelectGame(game.ID)
 		}),
 		listview.PainterOpt(material3.ListViewPainter{Theme: d.theme}),
 	)
@@ -264,6 +300,43 @@ func (d *Desktop) buildGameListPane() widget.Widget {
 	).Width(240).Padding(8).Gap(8)
 }
 
+func (d *Desktop) buildLibraryListPane() widget.Widget {
+	lv := listview.New(
+		listview.ItemCountFn(func() int {
+			_ = d.libraryVersion.Get()
+			return d.ctrl.LibraryListCount()
+		}),
+		listview.FixedItemHeight(44),
+		listview.BuildItem(func(ctx listview.ItemContext) widget.Widget {
+			_ = d.libraryVersion.Get()
+			pdf, counts, ok := d.ctrl.LibraryPDFAt(ctx.Index)
+			if !ok {
+				return listRowText("(empty)")
+			}
+			label := fmt.Sprintf("%s (%d sections)", pdf.Title, counts.Total)
+			d.ctrl.mu.Lock()
+			isDraft := d.ctrl.DraftLibraryPDF != nil && d.ctrl.DraftLibraryPDF.ID == pdf.ID
+			d.ctrl.mu.Unlock()
+			if isDraft {
+				label += " — unsaved"
+			}
+			return listRowText(label)
+		}),
+		listview.OnItemClick(func(index int) {
+			pdf, _, ok := d.ctrl.LibraryPDFAt(index)
+			if ok {
+				d.ctrl.SelectLibraryPDF(pdf.ID)
+			}
+		}),
+		listview.PainterOpt(material3.ListViewPainter{Theme: d.theme}),
+	)
+
+	return primitives.VBox(
+		components.Label("PDF Library"),
+		primitives.Expanded(lv),
+	).Width(280).Padding(8).Gap(8)
+}
+
 func (d *Desktop) buildGameDetailPane() widget.Widget {
 	nameField := textfield.New(
 		textfield.Placeholder("Game name"),
@@ -272,11 +345,10 @@ func (d *Desktop) buildGameDetailPane() widget.Widget {
 			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
 			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly
+			return d.ctrl.SelectedGame == nil || d.ctrl.GameReadOnly
 		}),
 		textfield.PainterOpt(d.painters.textfield),
 	)
-
 	notesField := textfield.New(
 		textfield.Placeholder("Notes"),
 		textfield.ValueSignal(d.gameNotesSignal),
@@ -284,19 +356,18 @@ func (d *Desktop) buildGameDetailPane() widget.Widget {
 			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
 			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly
+			return d.ctrl.SelectedGame == nil || d.ctrl.GameReadOnly
 		}),
 		textfield.PainterOpt(d.painters.textfield),
 	)
-
 	optInField := textfield.New(
-		textfield.Placeholder("Describe which optional rules your table uses"),
+		textfield.Placeholder("Optional rules in use"),
 		textfield.ValueSignal(d.gameOptInSignal),
 		textfield.DisabledFn(func() bool {
 			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
 			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly
+			return d.ctrl.SelectedGame == nil || d.ctrl.GameReadOnly
 		}),
 		textfield.PainterOpt(d.painters.textfield),
 	)
@@ -312,13 +383,13 @@ func (d *Desktop) buildGameDetailPane() widget.Widget {
 			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
 			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly
+			return d.ctrl.SelectedGame == nil || d.ctrl.GameReadOnly
 		}),
 	)
 
 	optionalTable := datatable.New(
 		datatable.Columns([]datatable.Column{
-			{Key: "entry", Title: "Optional sections reference", Width: 360},
+			{Key: "entry", Title: "Optional sections reference", Width: 420},
 		}),
 		datatable.RowCountFn(func() int {
 			_ = d.optionalRefVersion.Get()
@@ -339,88 +410,75 @@ func (d *Desktop) buildGameDetailPane() widget.Widget {
 		datatable.PainterOpt(d.painters.datatable),
 	)
 
-	pdfList := listview.New(
+	attachedList := listview.New(
 		listview.ItemCountFn(func() int {
-			_ = d.pdfVersion.Get()
+			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
 			defer d.ctrl.mu.Unlock()
-			return len(d.ctrl.PDFs)
+			return len(d.ctrl.AttachedPDFs)
 		}),
-		listview.FixedItemHeight(56),
-		listview.SelectionModeOpt(listview.SelectionSingle),
+		listview.FixedItemHeight(44),
 		listview.BuildItem(func(ctx listview.ItemContext) widget.Widget {
-			_ = d.pdfVersion.Get()
+			_ = d.gamesVersion.Get()
 			d.ctrl.mu.Lock()
-			var title, path, id string
-			var counts sectionCounts
-			if ctx.Index >= 0 && ctx.Index < len(d.ctrl.PDFs) {
-				pdf := d.ctrl.PDFs[ctx.Index]
-				id = pdf.ID
-				title = pdf.Title
-				path = pdf.FilePath
-				counts = d.ctrl.PDFCounts[id]
+			defer d.ctrl.mu.Unlock()
+			if ctx.Index < 0 || ctx.Index >= len(d.ctrl.AttachedPDFs) {
+				return listRowText("")
 			}
-			d.ctrl.mu.Unlock()
-
-			badge := fmt.Sprintf("%d sections", counts.Total)
-			if counts.Optional > 0 {
-				badge += fmt.Sprintf(", %d optional", counts.Optional)
-			}
-			return primitives.VBox(
-				primitives.Text(title).FontSize(14).Bold(),
-				components.Muted(truncate(path, 64)),
-				components.Muted(badge),
-			).Padding(8).Gap(2)
-		}),
-		listview.OnItemClick(func(index int) {
-			d.ctrl.mu.Lock()
-			var id string
-			if index >= 0 && index < len(d.ctrl.PDFs) {
-				id = d.ctrl.PDFs[index].ID
-			}
-			d.ctrl.mu.Unlock()
-			d.ctrl.SelectPDF(id)
+			pdf := d.ctrl.AttachedPDFs[ctx.Index]
+			return listRowText("Attached: " + pdf.Title)
 		}),
 		listview.PainterOpt(material3.ListViewPainter{Theme: d.theme}),
 	)
 
-	archiveBtn := button.New(
-		button.TextOpt("Archive"),
-		button.OnClick(func() { d.ctrl.ArchiveSelectedGame() }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.Outlined),
-		button.DisabledFn(func() bool {
+	libraryPicker := listview.New(
+		listview.ItemCountFn(func() int {
+			_ = d.libraryVersion.Get()
 			_ = d.gamesVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly || d.ctrl.DraftGame != nil
+			return d.ctrl.LibraryListCount()
 		}),
-	)
-	restoreBtn := button.New(
-		button.TextOpt("Restore"),
-		button.OnClick(func() { d.ctrl.RestoreSelectedGame() }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.Tonal),
-		button.DisabledFn(func() bool {
+		listview.FixedItemHeight(44),
+		listview.BuildItem(func(ctx listview.ItemContext) widget.Widget {
+			_ = d.libraryVersion.Get()
 			_ = d.gamesVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || !d.ctrl.ReadOnly
+			pdf, _, ok := d.ctrl.LibraryPDFAt(ctx.Index)
+			if !ok {
+				return listRowText("")
+			}
+			if d.ctrl.IsPDFAttachedToGame(pdf.ID) {
+				return listRowText(pdf.Title + " (attached)")
+			}
+			return listRowText(pdf.Title + " — click to attach")
 		}),
+		listview.OnItemClick(func(index int) {
+			pdf, _, ok := d.ctrl.LibraryPDFAt(index)
+			if !ok {
+				return
+			}
+			if d.ctrl.IsPDFAttachedToGame(pdf.ID) {
+				d.ctrl.DetachPDFFromGame(pdf.ID)
+			} else {
+				d.ctrl.AttachPDFToGame(pdf.ID)
+			}
+		}),
+		listview.PainterOpt(material3.ListViewPainter{Theme: d.theme}),
 	)
 
-	gameEmptyHint := primitives.Text("").ContentSignal(state.NewComputed(func() string {
+	hint := primitives.Text("").ContentSignal(state.NewComputed(func() string {
 		_ = d.gamesVersion.Get()
 		d.ctrl.mu.Lock()
 		defer d.ctrl.mu.Unlock()
 		if d.ctrl.SelectedGame == nil {
-			return "Select or create a game to edit details."
+			return "Select or create a game."
 		}
-		return ""
+		if d.ctrl.DraftGame != nil {
+			return "Save the game before attaching PDFs from the library."
+		}
+		return "Click a library PDF below to attach or detach it for this game."
 	}))
 
-	detailContent := primitives.VBox(
-		gameEmptyHint,
+	return primitives.VBox(
+		hint,
 		components.Label("Game detail"),
 		components.Label("Name"),
 		nameField,
@@ -429,67 +487,50 @@ func (d *Desktop) buildGameDetailPane() widget.Widget {
 		components.Label("Optional rules in use"),
 		optInField,
 		saveGameBtn,
+		primitives.HBox(
+			button.New(button.TextOpt("Archive"), button.OnClick(func() { d.ctrl.ArchiveSelectedGame() }), button.PainterOpt(d.painters.button), button.VariantOpt(button.Outlined)),
+			button.New(button.TextOpt("Restore"), button.OnClick(func() { d.ctrl.RestoreSelectedGame() }), button.PainterOpt(d.painters.button), button.VariantOpt(button.Tonal)),
+		).Gap(8),
 		components.Label("Optional sections reference"),
 		optionalTable,
-		primitives.HBox(archiveBtn, restoreBtn).Gap(8),
-		components.Label("PDFs for this game"),
-		primitives.Expanded(pdfList),
+		components.Label("Attached PDFs"),
+		attachedList,
+		components.Label("PDF Library (attach/detach)"),
+		primitives.Expanded(libraryPicker),
 	).Padding(12).Gap(8)
-
-	return scrollview.New(detailContent)
 }
 
-func (d *Desktop) buildPDFPane() widget.Widget {
+func (d *Desktop) buildLibraryEditorPane() widget.Widget {
 	titleField := textfield.New(
 		textfield.Placeholder("PDF title"),
 		textfield.ValueSignal(d.pdfTitleSignal),
-		textfield.DisabledFn(func() bool {
-			_ = d.pdfVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly || d.ctrl.DraftGame != nil
-		}),
 		textfield.PainterOpt(d.painters.textfield),
 	)
-
 	pathField := textfield.New(
 		textfield.Placeholder("/path/to/rules.pdf"),
 		textfield.ValueSignal(d.pdfPathSignal),
-		textfield.DisabledFn(func() bool {
-			_ = d.pdfVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly || d.ctrl.DraftGame != nil
-		}),
 		textfield.PainterOpt(d.painters.textfield),
-	)
-
-	browseBtn := button.New(
-		button.TextOpt("Browse…"),
-		button.OnClick(func() { d.pickPDFPath() }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.Outlined),
-		button.DisabledFn(func() bool {
-			_ = d.pdfVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly || d.ctrl.DraftGame != nil
-		}),
 	)
 
 	savePDFBtn := button.New(
 		button.TextOpt("Save PDF"),
 		button.OnClick(func() {
-			_ = d.ctrl.SavePDF(d.pdfTitleSignal.Get(), d.pdfPathSignal.Get())
+			_ = d.ctrl.SaveLibraryPDF(d.pdfTitleSignal.Get(), d.pdfPathSignal.Get())
 		}),
 		button.PainterOpt(d.painters.button),
 		button.VariantOpt(button.Filled),
-		button.DisabledFn(func() bool {
-			_ = d.pdfVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedGame == nil || d.ctrl.ReadOnly || d.ctrl.DraftGame != nil
-		}),
+	)
+	browseBtn := button.New(
+		button.TextOpt("Browse…"),
+		button.OnClick(func() { d.pickPDFPath() }),
+		button.PainterOpt(d.painters.button),
+		button.VariantOpt(button.Outlined),
+	)
+	deleteBtn := button.New(
+		button.TextOpt("Delete PDF"),
+		button.OnClick(func() { d.confirmDeleteLibraryPDF() }),
+		button.PainterOpt(d.painters.button),
+		button.VariantOpt(button.Outlined),
 	)
 
 	tocList := listview.New(
@@ -499,7 +540,7 @@ func (d *Desktop) buildPDFPane() widget.Widget {
 			defer d.ctrl.mu.Unlock()
 			return len(d.ctrl.TOCSections)
 		}),
-		listview.ItemHeightFn(func(int) float32 { return 72 }),
+		listview.FixedItemHeight(104),
 		listview.BuildItem(func(ctx listview.ItemContext) widget.Widget {
 			return d.buildTOCRow(ctx.Index)
 		}),
@@ -511,71 +552,36 @@ func (d *Desktop) buildPDFPane() widget.Widget {
 		button.OnClick(func() { d.ctrl.AddTOCSection() }),
 		button.PainterOpt(d.painters.button),
 		button.VariantOpt(button.Tonal),
-		button.DisabledFn(func() bool {
-			_ = d.tocVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedPDF == nil || d.ctrl.ReadOnly
-		}),
 	)
-
 	saveSectionsBtn := button.New(
 		button.TextOpt("Save Sections"),
 		button.OnClick(func() { _ = d.ctrl.SaveTOCSectionsNow() }),
 		button.PainterOpt(d.painters.button),
 		button.VariantOpt(button.Filled),
-		button.DisabledFn(func() bool {
-			_ = d.tocVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedPDF == nil || d.ctrl.ReadOnly
-		}),
 	)
 
-	removePDFBtn := button.New(
-		button.TextOpt("Remove PDF"),
-		button.OnClick(func() { d.confirmRemovePDF() }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.Outlined),
-		button.DisabledFn(func() bool {
-			_ = d.pdfVersion.Get()
-			d.ctrl.mu.Lock()
-			defer d.ctrl.mu.Unlock()
-			return d.ctrl.SelectedPDF == nil || d.ctrl.ReadOnly
-		}),
-	)
-
-	pdfEmptyHint := primitives.Text("").ContentSignal(state.NewComputed(func() string {
-		_ = d.pdfVersion.Get()
+	hint := primitives.Text("").ContentSignal(state.NewComputed(func() string {
+		_ = d.libraryVersion.Get()
 		d.ctrl.mu.Lock()
 		defer d.ctrl.mu.Unlock()
-		if d.ctrl.DraftGame != nil {
-			return "Save the game before adding PDFs."
-		}
-		if d.ctrl.SelectedGame == nil {
-			return "Select a game to manage PDFs."
-		}
-		if d.ctrl.SelectedPDF == nil {
-			return "Select a PDF from the list, or enter a path and click Save PDF to add one."
+		if d.ctrl.SelectedLibraryPDF == nil {
+			return "Select or create a PDF from the library list."
 		}
 		return ""
 	}))
 
-	content := primitives.VBox(
-		pdfEmptyHint,
-		components.Label("PDF and table of contents"),
+	return primitives.VBox(
+		hint,
+		components.Label("PDF details"),
 		components.Label("Title"),
 		titleField,
 		components.Label("File path"),
 		pathField,
-		primitives.HBox(browseBtn, savePDFBtn).Gap(8),
-		removePDFBtn,
-		components.Label("Sections"),
+		primitives.HBox(browseBtn, savePDFBtn, deleteBtn).Gap(8),
+		components.Label("Table of contents"),
 		primitives.HBox(addSectionBtn, saveSectionsBtn).Gap(8),
 		primitives.Expanded(tocList),
 	).Padding(12).Gap(8)
-
-	return scrollview.New(content)
 }
 
 func (d *Desktop) buildTOCRow(index int) widget.Widget {
@@ -585,7 +591,6 @@ func (d *Desktop) buildTOCRow(index int) widget.Widget {
 	if index >= 0 && index < len(d.ctrl.TOCSections) {
 		sec = d.ctrl.TOCSections[index]
 	}
-	readOnly := d.ctrl.ReadOnly
 	d.ctrl.mu.Unlock()
 
 	titleField := textfield.New(
@@ -594,7 +599,6 @@ func (d *Desktop) buildTOCRow(index int) widget.Widget {
 		textfield.OnChange(func(v string) {
 			d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.Title = v })
 		}),
-		textfield.Disabled(readOnly),
 		textfield.PainterOpt(d.painters.textfield),
 	)
 	startField := textfield.New(
@@ -602,12 +606,10 @@ func (d *Desktop) buildTOCRow(index int) widget.Widget {
 		textfield.Placeholder("Start"),
 		textfield.OnChange(func(v string) {
 			n, err := ParsePageValue(v)
-			if err != nil {
-				return
+			if err == nil {
+				d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.StartPage = n })
 			}
-			d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.StartPage = n })
 		}),
-		textfield.Disabled(readOnly),
 		textfield.PainterOpt(d.painters.textfield),
 	)
 	endField := textfield.New(
@@ -615,62 +617,42 @@ func (d *Desktop) buildTOCRow(index int) widget.Widget {
 		textfield.Placeholder("End"),
 		textfield.OnChange(func(v string) {
 			n, err := ParsePageValue(v)
-			if err != nil {
-				return
+			if err == nil {
+				d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.EndPage = n })
 			}
-			d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.EndPage = n })
 		}),
-		textfield.Disabled(readOnly),
 		textfield.PainterOpt(d.painters.textfield),
 	)
-
 	optCheckbox := checkbox.New(
 		checkbox.LabelOpt("Optional"),
 		checkbox.Checked(sec.Optional),
 		checkbox.OnToggle(func(checked bool) {
 			d.ctrl.UpdateTOCSection(index, func(s *models.TOCSection) { s.Optional = checked })
 		}),
-		checkbox.Disabled(readOnly),
 		checkbox.PainterOpt(d.painters.checkbox),
 	)
 
-	upBtn := button.New(
-		button.TextOpt("Up"),
-		button.OnClick(func() { d.ctrl.MoveTOCSection(index, -1) }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.TextOnly),
-		button.Disabled(readOnly),
-	)
-	downBtn := button.New(
-		button.TextOpt("Down"),
-		button.OnClick(func() { d.ctrl.MoveTOCSection(index, 1) }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.TextOnly),
-		button.Disabled(readOnly),
-	)
-	delBtn := button.New(
-		button.TextOpt("Delete"),
-		button.OnClick(func() { d.ctrl.RemoveTOCSection(index) }),
-		button.PainterOpt(d.painters.button),
-		button.VariantOpt(button.Outlined),
-		button.Disabled(readOnly),
-	)
-
 	return primitives.VBox(
-		primitives.HBox(
-			optCheckbox,
-			primitives.Expanded(titleField),
-		).Gap(8),
+		primitives.HBox(optCheckbox, primitives.Expanded(titleField)).Gap(8),
 		primitives.HBox(
 			components.Label("Start"),
 			startField,
 			components.Label("End"),
 			endField,
-			upBtn,
-			downBtn,
-			delBtn,
-		).Gap(8),
+			button.New(button.TextOpt("Up"), button.OnClick(func() { d.ctrl.MoveTOCSection(index, -1) }), button.PainterOpt(d.painters.button), button.VariantOpt(button.TextOnly)),
+			button.New(button.TextOpt("Down"), button.OnClick(func() { d.ctrl.MoveTOCSection(index, 1) }), button.PainterOpt(d.painters.button), button.VariantOpt(button.TextOnly)),
+			button.New(button.TextOpt("Del"), button.OnClick(func() { d.ctrl.RemoveTOCSection(index) }), button.PainterOpt(d.painters.button), button.VariantOpt(button.Outlined)),
+		).Gap(6),
 	).Padding(8).Gap(4).Background(widget.RGBA8(255, 255, 255, 255)).Rounded(8)
+}
+
+func listRowText(label string) widget.Widget {
+	if label == "" {
+		label = " "
+	}
+	return primitives.Box(
+		primitives.Text(label).FontSize(14).Color(widget.RGBA8(30, 30, 30, 255)),
+	).Padding(12).Height(44)
 }
 
 func (d *Desktop) pickPDFPath() {
@@ -696,32 +678,18 @@ func (d *Desktop) pickPDFPath() {
 	d.statusVersion.Set(d.statusVersion.Get() + 1)
 }
 
-func (d *Desktop) confirmRemovePDF() {
+func (d *Desktop) confirmDeleteLibraryPDF() {
 	d.ctrl.mu.Lock()
-	pdf := d.ctrl.SelectedPDF
-	gameID := ""
-	if d.ctrl.SelectedGame != nil {
-		gameID = d.ctrl.SelectedGame.ID
-	}
+	pdf := d.ctrl.SelectedLibraryPDF
 	d.ctrl.mu.Unlock()
-	if pdf == nil || gameID == "" {
+	if pdf == nil {
 		return
 	}
-	msg := fmt.Sprintf("Remove %q from this game and delete its sections?", pdf.Title)
-	dlg := dialog.Confirm("Remove PDF", msg, func() {}, func() {
-		d.ctrl.RemovePDF(pdf.ID)
+	msg := fmt.Sprintf("Delete %q from the library? It must be detached from all games first.", pdf.Title)
+	dlg := dialog.Confirm("Delete PDF", msg, func() {}, func() {
+		d.ctrl.DeleteLibraryPDF(pdf.ID)
 	})
 	dlg.Show(d.ctx())
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
 }
 
 func fileStem(path string) string {

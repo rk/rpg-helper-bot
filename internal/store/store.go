@@ -26,13 +26,17 @@ type Store interface {
 	ArchiveGame(id string) error
 	RestoreGame(id string) error
 
-	ListPDFs(gameID string) ([]models.PDF, error)
-	AddPDF(p *models.PDF) error
-	UpdatePDF(p models.PDF, gameID string) error
-	RemovePDF(id, gameID string) error
+	ListPDFs() ([]models.PDF, error)
+	GetPDF(id string) (*models.PDF, error)
+	SavePDF(p *models.PDF) error
+	DeletePDF(id string) error
+
+	ListGamePDFs(gameID string) ([]models.PDF, error)
+	AttachPDFToGame(gameID, pdfID string) error
+	DetachPDFFromGame(gameID, pdfID string) error
 
 	ListTOCSections(pdfID string) ([]models.TOCSection, error)
-	SaveTOCSections(pdfID, gameID string, sections []models.TOCSection) error
+	SaveTOCSections(pdfID string, sections []models.TOCSection) error
 
 	ListOptionalSections(gameID string) ([]OptionalSectionRef, error)
 	CountTOCSections(pdfID string) (total int, optional int, err error)

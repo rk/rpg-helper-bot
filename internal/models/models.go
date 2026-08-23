@@ -12,9 +12,9 @@ type Game struct {
 	UpdatedAt          time.Time
 }
 
+// PDF is a globally configured document in the PDF library.
 type PDF struct {
 	ID        string
-	GameID    string
 	Title     string
 	FilePath  string
 	PageCount int
