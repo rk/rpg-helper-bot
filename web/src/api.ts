@@ -104,6 +104,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function uploadPDF(data: {
+  title: string;
+  file: File;
+  toc_source?: TOCImportSource;
+  toc_start_page?: number;
+  toc_end_page?: number;
+  toc_include_children?: boolean;
+}): Promise<CreatePDFResult> {
+  const form = new FormData();
+  form.append("file", data.file);
+  form.append("title", data.title);
+  if (data.toc_source) form.append("toc_source", data.toc_source);
+  if (data.toc_start_page != null) form.append("toc_start_page", String(data.toc_start_page));
+  if (data.toc_end_page != null) form.append("toc_end_page", String(data.toc_end_page));
+  if (data.toc_include_children != null) {
+    form.append("toc_include_children", data.toc_include_children ? "true" : "false");
+  }
+
+  const res = await fetch("/api/pdfs/upload", { method: "POST", body: form });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(message);
+  }
+  return res.json();
+}
+
 export const api = {
   listPDFs: () => request<PDFSummary[]>("/api/pdfs"),
   getPDF: (id: string) => request<PDFSummary>(`/api/pdfs/${id}`),
@@ -115,6 +147,7 @@ export const api = {
     toc_end_page?: number;
     toc_include_children?: boolean;
   }) => request<CreatePDFResult>("/api/pdfs", { method: "POST", body: JSON.stringify(data) }),
+  uploadPDF,
   updatePDF: (id: string, data: Partial<Pick<PDF, "title" | "file_path" | "page_count">>) =>
     request<PDFSummary>(`/api/pdfs/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deletePDF: (id: string) => request<void>(`/api/pdfs/${id}`, { method: "DELETE" }),

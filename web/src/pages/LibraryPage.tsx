@@ -4,11 +4,18 @@ import { api, PDFSummary, TOCImportSource } from "../api";
 import { EmptyState, PathBadge, truncatePath } from "../components/Badges";
 import { useToast } from "../components/Toast";
 
+function titleFromFilename(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? name;
+  return base.replace(/\.pdf$/i, "").trim();
+}
+
 export default function LibraryPage() {
   const [pdfs, setPdfs] = useState<PDFSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [useManualPath, setUseManualPath] = useState(false);
   const [filePath, setFilePath] = useState("");
   const [tocStartPage, setTocStartPage] = useState<number | "">("");
   const [tocEndPage, setTocEndPage] = useState<number | "">("");
@@ -32,50 +39,93 @@ export default function LibraryPage() {
     load();
   }, []);
 
+  const resetForm = () => {
+    setTitle("");
+    setSelectedFile(null);
+    setUseManualPath(false);
+    setFilePath("");
+    setTocStartPage("");
+    setTocEndPage("");
+    setTocImportSource("none");
+    setIncludeBookmarkChildren(true);
+    setShowForm(false);
+  };
+
+  const buildTOCOptions = () => {
+    const options: {
+      toc_source?: TOCImportSource;
+      toc_start_page?: number;
+      toc_end_page?: number;
+      toc_include_children?: boolean;
+    } = {};
+
+    if (tocImportSource === "pages") {
+      if (tocStartPage === "" || tocEndPage === "") {
+        throw new Error("Enter ToC start and end pages, or choose a different import method");
+      }
+      options.toc_source = "pages";
+      options.toc_start_page = Number(tocStartPage);
+      options.toc_end_page = Number(tocEndPage);
+    } else if (tocImportSource === "bookmarks") {
+      options.toc_source = "bookmarks";
+      options.toc_include_children = includeBookmarkChildren;
+    }
+
+    return options;
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const payload: {
-        title: string;
-        file_path: string;
-        toc_source?: TOCImportSource;
-        toc_start_page?: number;
-        toc_end_page?: number;
-        toc_include_children?: boolean;
-      } = { title, file_path: filePath };
+      const tocOptions = buildTOCOptions();
+      let pdf;
 
-      if (tocImportSource === "pages") {
-        if (tocStartPage === "" || tocEndPage === "") {
-          showError("Enter ToC start and end pages, or choose a different import method");
+      if (useManualPath) {
+        if (!filePath.trim()) {
+          showError("Enter a file path or choose a PDF file instead");
           return;
         }
-        payload.toc_source = "pages";
-        payload.toc_start_page = Number(tocStartPage);
-        payload.toc_end_page = Number(tocEndPage);
-      } else if (tocImportSource === "bookmarks") {
-        payload.toc_source = "bookmarks";
-        payload.toc_include_children = includeBookmarkChildren;
+        pdf = await api.createPDF({
+          title,
+          file_path: filePath,
+          ...tocOptions,
+        });
+      } else {
+        if (!selectedFile) {
+          showError("Choose a PDF file to add");
+          return;
+        }
+        const resolvedTitle = title.trim() || titleFromFilename(selectedFile.name);
+        if (!resolvedTitle) {
+          showError("Enter a title for this PDF");
+          return;
+        }
+        pdf = await api.uploadPDF({
+          title: resolvedTitle,
+          file: selectedFile,
+          ...tocOptions,
+        });
       }
 
-      const pdf = await api.createPDF(payload);
       if (pdf.toc_extract_error) {
         showError(`PDF added, but section import failed: ${pdf.toc_extract_error}`);
-      } else if (payload.toc_source) {
+      } else if (tocOptions.toc_source) {
         showInfo("PDF added with imported sections");
       } else {
         showInfo("PDF added");
       }
-      setTitle("");
-      setFilePath("");
-      setTocStartPage("");
-      setTocEndPage("");
-      setTocImportSource("none");
-      setIncludeBookmarkChildren(true);
-      setShowForm(false);
+      resetForm();
       await load();
       navigate(`/library/${pdf.id}`);
     } catch (err) {
       showError(err instanceof Error ? err.message : "Failed to add PDF");
+    }
+  };
+
+  const handleFileChange = (file: File | null) => {
+    setSelectedFile(file);
+    if (file && !title.trim()) {
+      setTitle(titleFromFilename(file.name));
     }
   };
 
@@ -95,10 +145,41 @@ export default function LibraryPage() {
               Title
               <input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </label>
-            <label>
-              Absolute file path
-              <input value={filePath} onChange={(e) => setFilePath(e.target.value)} required />
+
+            {!useManualPath ? (
+              <>
+                <label>
+                  PDF file
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    required
+                    onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {selectedFile && <p className="hint file-name-hint">Selected: {selectedFile.name}</p>}
+                <p className="hint">The file is copied into your rpg-helper-bot library folder.</p>
+              </>
+            ) : (
+              <label>
+                Absolute file path
+                <input value={filePath} onChange={(e) => setFilePath(e.target.value)} required />
+              </label>
+            )}
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={useManualPath}
+                onChange={(e) => {
+                  setUseManualPath(e.target.checked);
+                  setSelectedFile(null);
+                  setFilePath("");
+                }}
+              />
+              Use an existing file path instead (advanced)
             </label>
+
             <fieldset className="toc-import-fieldset">
               <legend>Sections on import (optional)</legend>
               <label className="radio-row">
@@ -167,7 +248,7 @@ export default function LibraryPage() {
               <button type="submit" className="btn primary">
                 Save
               </button>
-              <button type="button" className="btn" onClick={() => setShowForm(false)}>
+              <button type="button" className="btn" onClick={resetForm}>
                 Cancel
               </button>
             </div>

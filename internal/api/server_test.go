@@ -20,7 +20,7 @@ func testServer(t *testing.T) (*api.Server, *store.SQLiteStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &api.Server{Store: s, PlayerPort: 8766}, s
+	return &api.Server{Store: s, DataDir: t.TempDir(), PlayerPort: 8766}, s
 }
 
 func TestHealth(t *testing.T) {

@@ -59,11 +59,17 @@ func main() {
 		log.Printf("rebuild vectors: %v", err)
 	}
 
-	searchSvc := &search.Service{Store: sqliteStore, Embed: embedFn}
 	llmClient := llm.NewClient()
+
+	searchSvc := &search.Service{
+		Store:        sqliteStore,
+		Embed:        embedFn,
+		RewriteQuery: llmClient.RewriteSearchQuery,
+	}
 
 	server := &api.Server{
 		Store:           sqliteStore,
+		DataDir:         dataDir,
 		GMPort:          app.GMPort(),
 		PlayerPort:      app.PlayerPort(),
 		StaticDir:       resolveStaticDir(),

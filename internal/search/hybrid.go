@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"log"
 	"sort"
 	"strings"
 
@@ -16,9 +17,12 @@ const (
 	finalResultLimit  = 10
 )
 
+type QueryRewriteFunc func(ctx context.Context, query string) (string, error)
+
 type Service struct {
-	Store    store.Store
-	Embed    embed.Func
+	Store        store.Store
+	Embed        embed.Func
+	RewriteQuery QueryRewriteFunc
 }
 
 func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.SearchHit, error) {
@@ -44,7 +48,19 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 		pdfIDs = append(pdfIDs, p.ID)
 	}
 
-	candidates, err := s.Store.FTSSearch(pdfIDs, query, ftsCandidateLimit)
+	ftsQuery := query
+	if s.RewriteQuery != nil {
+		if rewritten, err := s.RewriteQuery(ctx, query); err == nil {
+			if rewritten = strings.TrimSpace(rewritten); rewritten != "" {
+				ftsQuery = rewritten
+				if ftsQuery != query {
+					log.Printf("search: FTS query rewritten %q -> %q", query, ftsQuery)
+				}
+			}
+		}
+	}
+
+	candidates, err := s.Store.FTSSearch(pdfIDs, ftsQuery, ftsCandidateLimit)
 	if err != nil {
 		return nil, err
 	}

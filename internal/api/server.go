@@ -16,6 +16,7 @@ import (
 
 type Server struct {
 	Store           store.Store
+	DataDir         string
 	GMPort          int
 	PlayerPort      int
 	StaticDir       string
@@ -31,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/pdfs", s.handleListPDFs)
 	mux.HandleFunc("POST /api/pdfs", s.handleCreatePDF)
+	mux.HandleFunc("POST /api/pdfs/upload", s.handleUploadPDF)
 	mux.HandleFunc("GET /api/pdfs/{id}", s.handleGetPDF)
 	mux.HandleFunc("PATCH /api/pdfs/{id}", s.handlePatchPDF)
 	mux.HandleFunc("DELETE /api/pdfs/{id}", s.handleDeletePDF)
@@ -176,47 +178,23 @@ func (s *Server) handleCreatePDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := createPDFResponse{}
-	var tocErr error
-	tocSource := strings.TrimSpace(strings.ToLower(req.TOCSource))
-	if tocSource == "" && req.TOCStartPage != nil && req.TOCEndPage != nil {
-		tocSource = "pages"
+	includeChildren := true
+	if req.TOCIncludeChildren != nil {
+		includeChildren = *req.TOCIncludeChildren
 	}
-	if tocSource != "" {
-		if store.ProbePath(p.FilePath) != models.PathStatusOK {
-			tocErr = errPDFPathMissing()
-		} else {
-			includeChildren := true
-			if req.TOCIncludeChildren != nil {
-				includeChildren = *req.TOCIncludeChildren
-			}
-			start, end := 0, 0
-			if req.TOCStartPage != nil {
-				start = *req.TOCStartPage
-			}
-			if req.TOCEndPage != nil {
-				end = *req.TOCEndPage
-			}
-			_, tocErr = s.applyImportedTOC(p.ID, p.FilePath, tocSource, start, end, includeChildren)
-		}
+	start, end := 0, 0
+	if req.TOCStartPage != nil {
+		start = *req.TOCStartPage
 	}
-
-	summary, err := s.enrichPDF(*p)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	if req.TOCEndPage != nil {
+		end = *req.TOCEndPage
 	}
-	// Re-fetch summary after possible ToC/page_count updates.
-	if tocErr == nil && tocSource != "" {
-		if refreshed, err := s.Store.GetPDF(p.ID); err == nil {
-			summary, _ = s.enrichPDF(*refreshed)
-		}
-	}
-	resp.PDFSummary = summary
-	if tocErr != nil {
-		resp.TOCExtractError = tocErr.Error()
-	}
-	writeJSON(w, http.StatusCreated, resp)
+	s.respondCreatePDF(w, p, pdfImportOptions{
+		TOCSource:          req.TOCSource,
+		TOCStartPage:      start,
+		TOCEndPage:        end,
+		TOCIncludeChildren: includeChildren,
+	})
 }
 
 func (s *Server) handleGetPDF(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +253,11 @@ func (s *Server) handlePatchPDF(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeletePDF(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	pdf, err := s.Store.GetPDF(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	if err := s.Store.DeletePDF(id); err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "not found") {
@@ -283,6 +266,7 @@ func (s *Server) handleDeletePDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err)
 		return
 	}
+	s.removeManagedPDF(pdf.FilePath)
 	w.WriteHeader(http.StatusNoContent)
 }
 

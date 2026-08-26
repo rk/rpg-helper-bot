@@ -364,6 +364,15 @@ input.input-error {
   width: 6rem;
 }
 
+.inline-form input[type="file"] {
+  font: inherit;
+  max-width: 100%;
+}
+
+.file-name-hint {
+  margin-top: -0.35rem;
+}
+
 .toc-import-fieldset {
   border: 1px solid var(--border);
   border-radius: 8px;
