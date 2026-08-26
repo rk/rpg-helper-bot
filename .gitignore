@@ -7,6 +7,9 @@
 *.dll
 *.so
 *.dylib
+/rpg-helper-bot
+
+# Test binary, built with `go test -c`
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,3 +33,11 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.DS_Store
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Local test fixtures (PDFs, etc.)
+fixtures/

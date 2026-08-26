@@ -1,9 +1,10 @@
 # rpg-helper-bot
 A helpful bot that crawls your PDF rules and helps answer questions from your players.
 
-## Desktop UI
+## Base Application
 
-The main executable uses `gogpu/ui` to provide basic management features for the Game Master (GM).
+The main executable exposes a small webserver API for a simple React web app (running on Deno) to consume. Together they provide basic management features for the Game Master (GM).
+
 The GM can manage:
 
 * Adding and archiving Games.
