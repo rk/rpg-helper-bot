@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import QRCode from "react-qr-code";
 import { api, GameDetail, GamePDFEntry, PDFSummary, RunningStatus } from "../api";
 import { EmptyState, PathBadge, RunningBadge } from "../components/Badges";
 import { useToast } from "../components/Toast";
@@ -184,8 +185,23 @@ export default function GameDetailPage() {
             {game.running && runningStatus?.player_url && (
               <div className="card running-panel">
                 <h3>Player access</h3>
-                <p className="mono">{runningStatus.player_url}</p>
-                <p className="muted">{runningStatus.player_note}</p>
+                <div className="running-panel-body">
+                  <div className="player-qr" aria-hidden="true">
+                    <QRCode value={runningStatus.player_url} size={160} bgColor="#ffffff" fgColor="#0f1419" />
+                  </div>
+                  <div className="running-panel-copy">
+                    <p className="muted">{runningStatus.player_note}</p>
+                    <a
+                      className="player-url"
+                      href={runningStatus.player_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {runningStatus.player_url}
+                    </a>
+                    <p className="hint">Scan the QR code or open the link on the same Wi‑Fi network.</p>
+                  </div>
+                </div>
               </div>
             )}
 

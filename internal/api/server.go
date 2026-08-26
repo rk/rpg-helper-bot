@@ -6,15 +6,23 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/indexing"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
 type Server struct {
-	Store       store.Store
-	GMPort      int
-	PlayerPort  int
-	StaticDir   string
+	Store           store.Store
+	GMPort          int
+	PlayerPort      int
+	StaticDir       string
+	PlayerStaticDir string
+	Indexer         *indexing.Service
+	Search          *search.Service
+	LLM             *llm.Client
 }
 
 func (s *Server) Handler() http.Handler {
@@ -30,6 +38,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pdfs/{id}/toc", s.handleGetTOC)
 	mux.HandleFunc("PUT /api/pdfs/{id}/toc", s.handlePutTOC)
 
+	s.registerTOCRoutes(mux)
+
 	mux.HandleFunc("GET /api/games", s.handleListGames)
 	mux.HandleFunc("POST /api/games", s.handleCreateGame)
 	mux.HandleFunc("GET /api/games/{id}", s.handleGetGame)
@@ -41,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/running", s.handleSetRunning)
 
 	mux.HandleFunc("GET /api/running", s.handleGetRunning)
+
+	s.registerIndexRoutes(mux)
 
 	if s.StaticDir != "" {
 		fileServer := http.FileServer(http.Dir(s.StaticDir))
@@ -55,6 +67,7 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Expose-Headers", "X-RPG-Sources, X-RPG-Sources-Enc")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -138,8 +151,17 @@ func (s *Server) handleListPDFs(w http.ResponseWriter, r *http.Request) {
 }
 
 type createPDFRequest struct {
-	Title    string `json:"title"`
-	FilePath string `json:"file_path"`
+	Title             string `json:"title"`
+	FilePath          string `json:"file_path"`
+	TOCSource         string `json:"toc_source,omitempty"` // "pages" or "bookmarks"
+	TOCStartPage      *int   `json:"toc_start_page,omitempty"`
+	TOCEndPage        *int   `json:"toc_end_page,omitempty"`
+	TOCIncludeChildren *bool `json:"toc_include_children,omitempty"`
+}
+
+type createPDFResponse struct {
+	store.PDFSummary
+	TOCExtractError string `json:"toc_extract_error,omitempty"`
 }
 
 func (s *Server) handleCreatePDF(w http.ResponseWriter, r *http.Request) {
@@ -153,12 +175,48 @@ func (s *Server) handleCreatePDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+
+	resp := createPDFResponse{}
+	var tocErr error
+	tocSource := strings.TrimSpace(strings.ToLower(req.TOCSource))
+	if tocSource == "" && req.TOCStartPage != nil && req.TOCEndPage != nil {
+		tocSource = "pages"
+	}
+	if tocSource != "" {
+		if store.ProbePath(p.FilePath) != models.PathStatusOK {
+			tocErr = errPDFPathMissing()
+		} else {
+			includeChildren := true
+			if req.TOCIncludeChildren != nil {
+				includeChildren = *req.TOCIncludeChildren
+			}
+			start, end := 0, 0
+			if req.TOCStartPage != nil {
+				start = *req.TOCStartPage
+			}
+			if req.TOCEndPage != nil {
+				end = *req.TOCEndPage
+			}
+			_, tocErr = s.applyImportedTOC(p.ID, p.FilePath, tocSource, start, end, includeChildren)
+		}
+	}
+
 	summary, err := s.enrichPDF(*p)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, summary)
+	// Re-fetch summary after possible ToC/page_count updates.
+	if tocErr == nil && tocSource != "" {
+		if refreshed, err := s.Store.GetPDF(p.ID); err == nil {
+			summary, _ = s.enrichPDF(*refreshed)
+		}
+	}
+	resp.PDFSummary = summary
+	if tocErr != nil {
+		resp.TOCExtractError = tocErr.Error()
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleGetPDF(w http.ResponseWriter, r *http.Request) {
@@ -236,9 +294,21 @@ func (s *Server) handleProbePDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := store.ProbePath(p.FilePath)
+	pageCount := p.PageCount
+	if status == models.PathStatusOK {
+		if err := indexing.ToolsAvailable(); err == nil {
+			if n, err := indexing.PageCount(p.FilePath); err == nil && n > 0 {
+				pageCount = n
+				if p.PageCount != n {
+					p.PageCount = n
+					_ = s.Store.SavePDF(p)
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path_status": status,
-		"page_count":  p.PageCount,
+		"page_count":  pageCount,
 	})
 }
 
@@ -517,7 +587,7 @@ func (s *Server) handleGetRunning(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runningPayload(g *models.Game) runningResponse {
 	resp := runningResponse{
 		Game:       g,
-		PlayerNote: "Player UI not enabled yet",
+		PlayerNote: "Player UI available on the LAN player port",
 	}
 	if g != nil && g.Running {
 		resp.PlayerURL = playerURL(s.PlayerPort)

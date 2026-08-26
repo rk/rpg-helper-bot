@@ -1,6 +1,10 @@
 package store
 
-import "github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+import (
+	"time"
+
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+)
 
 type ListGamesFilter int
 
@@ -50,4 +54,10 @@ type Store interface {
 	ListTOCSections(pdfID string) ([]models.TOCSection, error)
 	SaveTOCSections(pdfID string, sections []models.TOCSection) error
 	CountTOCSections(pdfID string) (int, error)
+
+	SetPDFThumbnail(pdfID, path string) error
+	SetPDFIndexStatus(pdfID string, status models.IndexStatus, indexedAt *time.Time) error
+	SaveSectionText(sectionID, plainText string) error
+	ListIndexedSections() ([]models.TOCSection, error)
+	FTSSearch(pdfIDs []string, query string, limit int) ([]FTSCandidate, error)
 }

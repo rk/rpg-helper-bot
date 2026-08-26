@@ -109,3 +109,42 @@ func TestRunningExclusive(t *testing.T) {
 		t.Fatalf("expected g2 running, got %+v", resp.Game)
 	}
 }
+
+func TestChatAcceptsAISDKMessages(t *testing.T) {
+	server, db := testServer(t)
+	defer db.Close()
+
+	gameBody, _ := json.Marshal(map[string]string{"name": "Running Table"})
+	req := httptest.NewRequest(http.MethodPost, "/api/games", bytes.NewReader(gameBody))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	var game struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &game); err != nil {
+		t.Fatal(err)
+	}
+
+	runBody, _ := json.Marshal(map[string]bool{"running": true})
+	req = httptest.NewRequest(http.MethodPost, "/api/games/"+game.ID+"/running", bytes.NewReader(runBody))
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("running status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	chatBody := []byte(`{
+		"messages": [
+			{"id":"msg-1","role":"user","content":"What edges help soak rolls?"}
+		]
+	}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(chatBody))
+	rec = httptest.NewRecorder()
+	server.PlayerHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Content-Type") == "application/json" {
+		t.Fatalf("expected text response, got json error: %s", rec.Body.String())
+	}
+}

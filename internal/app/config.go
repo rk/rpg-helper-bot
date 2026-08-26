@@ -30,6 +30,14 @@ func DBPath() (string, error) {
 	return filepath.Join(dir, "rpg-helper-bot.db"), nil
 }
 
+func DataDir() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "data"), nil
+}
+
 func GMPort() int {
 	return envPort("RPG_HELPER_GM_PORT", DefaultGMPort)
 }

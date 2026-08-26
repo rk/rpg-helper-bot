@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, PDFSummary, TOCSection } from "../api";
+import { api, PDFSummary, TOCSection, TOCImportSource } from "../api";
 import { EmptyState, PathBadge } from "../components/Badges";
 import { useToast } from "../components/Toast";
 
@@ -26,6 +26,12 @@ export default function LibraryDetailPage() {
   const [filePath, setFilePath] = useState("");
   const [pageCount, setPageCount] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const [indexing, setIndexing] = useState(false);
+  const [tocStartPage, setTocStartPage] = useState(1);
+  const [tocEndPage, setTocEndPage] = useState(3);
+  const [tocImportSource, setTocImportSource] = useState<TOCImportSource>("bookmarks");
+  const [includeBookmarkChildren, setIncludeBookmarkChildren] = useState(true);
+  const [extracting, setExtracting] = useState(false);
 
   const load = async () => {
     if (!pdfId) return;
@@ -74,14 +80,52 @@ export default function LibraryDetailPage() {
     }
   };
 
+  const indexPDF = async () => {
+    if (!pdfId) return;
+    setIndexing(true);
+    try {
+      if (dirty) await saveTOC();
+      await api.indexPDF(pdfId);
+      showInfo("PDF indexed");
+      await load();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Indexing failed");
+    } finally {
+      setIndexing(false);
+    }
+  };
+
   const probePath = async () => {
     if (!pdfId) return;
     try {
       const result = await api.probePDF(pdfId);
       if (pdf) setPdf({ ...pdf, path_status: result.path_status });
+      if (result.page_count > 0) setPageCount(result.page_count);
       showInfo(result.path_status === "ok" ? "Path is reachable" : "Path is missing");
     } catch (err) {
       showError(err instanceof Error ? err.message : "Probe failed");
+    }
+  };
+
+  const importSections = async () => {
+    if (!pdfId) return;
+    setExtracting(true);
+    try {
+      const result = await api.extractTOC(pdfId, {
+        source: tocImportSource,
+        start_page: tocStartPage,
+        end_page: tocEndPage,
+        include_children: includeBookmarkChildren,
+      });
+      setSections(result.sections.length ? result.sections : [newSection()]);
+      if (result.page_count > 0) setPageCount(result.page_count);
+      setDirty(true);
+      const label = result.source === "bookmarks" ? "bookmarks" : "ToC pages";
+      showInfo(`Imported ${result.sections.length} sections from ${label}`);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Section import failed");
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -138,9 +182,18 @@ export default function LibraryDetailPage() {
         ) : (
           <>
             <div className="pane-header">
-              <h1>{pdf.title}</h1>
+              <div className="title-row">
+                {pdf.index_status === "indexed" && pdfId && (
+                  <img src={api.thumbnailURL(pdfId)} alt="" className="pdf-thumb" />
+                )}
+                <h1>{pdf.title}</h1>
+              </div>
               <div className="header-actions">
                 <PathBadge status={pdf.path_status} />
+                <span className="badge badge-index">{pdf.index_status}</span>
+                <button type="button" className="btn primary" onClick={indexPDF} disabled={indexing || sections.length === 0}>
+                  {indexing ? "Indexing…" : "Index PDF"}
+                </button>
                 <button type="button" className="btn" onClick={probePath}>
                   Check path
                 </button>
@@ -188,6 +241,74 @@ export default function LibraryDetailPage() {
                 <button type="button" className="btn" onClick={addSection}>
                   + Add section
                 </button>
+              </div>
+
+              <div className="toc-extract-panel card">
+                <p className="hint">
+                  Import sections automatically, then review and save. End pages are set to the page before the next
+                  section starts.
+                </p>
+                <div className="toc-import-modes">
+                  <label className="radio-row">
+                    <input
+                      type="radio"
+                      name="toc-import-detail"
+                      checked={tocImportSource === "bookmarks"}
+                      onChange={() => setTocImportSource("bookmarks")}
+                    />
+                    PDF bookmarks
+                  </label>
+                  <label className="radio-row">
+                    <input
+                      type="radio"
+                      name="toc-import-detail"
+                      checked={tocImportSource === "pages"}
+                      onChange={() => setTocImportSource("pages")}
+                    />
+                    ToC pages
+                  </label>
+                </div>
+                {tocImportSource === "bookmarks" ? (
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={includeBookmarkChildren}
+                      onChange={(e) => setIncludeBookmarkChildren(e.target.checked)}
+                    />
+                    Include nested bookmarks
+                  </label>
+                ) : (
+                  <div className="toc-extract-row">
+                    <label>
+                      ToC start
+                      <input
+                        type="number"
+                        min={1}
+                        value={tocStartPage}
+                        onChange={(e) => setTocStartPage(Number(e.target.value))}
+                      />
+                    </label>
+                    <label>
+                      ToC end
+                      <input
+                        type="number"
+                        min={1}
+                        value={tocEndPage}
+                        onChange={(e) => setTocEndPage(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                )}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={importSections}
+                    disabled={extracting || pdf.path_status === "missing"}
+                  >
+                    {extracting ? "Importing…" : "Import sections"}
+                  </button>
+                </div>
               </div>
 
               {sections.length === 0 ? (

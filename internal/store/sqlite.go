@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 type SQLiteStore struct {
 	db *sql.DB
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 		return s.setSchemaVersion(schemaVersion)
 	}
 	if version < schemaVersion {
-		if err := s.migrateToV3(version); err != nil {
+		if err := s.migrateForward(version); err != nil {
 			return err
 		}
 		return s.setSchemaVersion(schemaVersion)
@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS pdfs (
   title TEXT NOT NULL,
   file_path TEXT NOT NULL,
   page_count INTEGER NOT NULL DEFAULT 0,
+  thumbnail_path TEXT,
+  index_status TEXT NOT NULL DEFAULT 'none',
+  indexed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -122,7 +125,16 @@ CREATE TABLE IF NOT EXISTS toc_sections (
   title TEXT NOT NULL,
   start_page INTEGER NOT NULL,
   end_page INTEGER NOT NULL,
-  sort_order INTEGER NOT NULL
+  sort_order INTEGER NOT NULL,
+  plain_text TEXT NOT NULL DEFAULT '',
+  indexed_at TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS toc_sections_fts USING fts5(
+  title,
+  content,
+  pdf_id UNINDEXED,
+  section_id UNINDEXED
 );
 
 CREATE INDEX IF NOT EXISTS idx_toc_pdf ON toc_sections(pdf_id, sort_order);
@@ -131,6 +143,56 @@ CREATE INDEX IF NOT EXISTS idx_games_running ON games(running);
 `
 	_, err := s.db.Exec(schema)
 	return err
+}
+
+func (s *SQLiteStore) migrateForward(from int) error {
+	if from == 2 {
+		if err := s.migrateToV3(from); err != nil {
+			return err
+		}
+		from = 3
+	}
+	if from == 3 {
+		return s.migrateToV4()
+	}
+	if from < 3 {
+		return fmt.Errorf("unsupported migration from version %d", from)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateToV4() error {
+	if !s.columnExists("pdfs", "index_status") {
+		if _, err := s.db.Exec(`ALTER TABLE pdfs ADD COLUMN thumbnail_path TEXT`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`ALTER TABLE pdfs ADD COLUMN index_status TEXT NOT NULL DEFAULT 'none'`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`ALTER TABLE pdfs ADD COLUMN indexed_at TEXT`); err != nil {
+			return err
+		}
+	}
+	if !s.columnExists("toc_sections", "plain_text") {
+		if _, err := s.db.Exec(`ALTER TABLE toc_sections ADD COLUMN plain_text TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`ALTER TABLE toc_sections ADD COLUMN indexed_at TEXT`); err != nil {
+			return err
+		}
+	}
+	if !s.tableExists("toc_sections_fts") {
+		if _, err := s.db.Exec(`
+CREATE VIRTUAL TABLE toc_sections_fts USING fts5(
+  title,
+  content,
+  pdf_id UNINDEXED,
+  section_id UNINDEXED
+);`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) migrateToV3(from int) error {
@@ -148,35 +210,59 @@ func (s *SQLiteStore) migrateToV3(from int) error {
 			if err != nil {
 				return err
 			}
-			defer rows.Close()
+			var gameIDs []string
 			for rows.Next() {
 				var gameID string
 				if err := rows.Scan(&gameID); err != nil {
+					rows.Close()
 					return err
 				}
+				gameIDs = append(gameIDs, gameID)
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+
+			for _, gameID := range gameIDs {
 				pdfRows, err := s.db.Query(`SELECT pdf_id FROM game_pdfs WHERE game_id = ? ORDER BY rowid`, gameID)
 				if err != nil {
 					return err
 				}
-				i := 0
+				var pdfIDs []string
 				for pdfRows.Next() {
 					var pdfID string
 					if err := pdfRows.Scan(&pdfID); err != nil {
 						pdfRows.Close()
 						return err
 					}
+					pdfIDs = append(pdfIDs, pdfID)
+				}
+				if err := pdfRows.Close(); err != nil {
+					return err
+				}
+				if err := pdfRows.Err(); err != nil {
+					return err
+				}
+
+				for i, pdfID := range pdfIDs {
 					if _, err := s.db.Exec(`UPDATE game_pdfs SET sort_order = ? WHERE game_id = ? AND pdf_id = ?`, i, gameID, pdfID); err != nil {
-						pdfRows.Close()
 						return err
 					}
-					i++
 				}
-				pdfRows.Close()
 			}
 		}
 		return nil
 	}
 	return fmt.Errorf("unsupported migration from version %d", from)
+}
+
+func (s *SQLiteStore) tableExists(name string) bool {
+	row := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name)
+	var n string
+	return row.Scan(&n) == nil
 }
 
 func (s *SQLiteStore) columnExists(table, column string) bool {
@@ -230,24 +316,72 @@ func scanGame(scanner interface {
 	return g, nil
 }
 
-func scanPDF(scanner interface {
-	Scan(dest ...any) error
-}) (models.PDF, error) {
-	var p models.PDF
-	var createdAt, updatedAt string
-	if err := scanner.Scan(&p.ID, &p.Title, &p.FilePath, &p.PageCount, &createdAt, &updatedAt); err != nil {
-		return models.PDF{}, err
-	}
-	var err error
-	p.CreatedAt, err = parseTime(createdAt)
+func (s *SQLiteStore) ListPDFs() ([]models.PDF, error) {
+	rows, err := s.db.Query(`SELECT ` + pdfSelectCols + ` FROM pdfs ORDER BY title ASC`)
 	if err != nil {
-		return models.PDF{}, err
+		return nil, err
 	}
-	p.UpdatedAt, err = parseTime(updatedAt)
+	defer rows.Close()
+
+	var pdfs []models.PDF
+	for rows.Next() {
+		p, err := scanPDFRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		pdfs = append(pdfs, p)
+	}
+	return pdfs, rows.Err()
+}
+
+func (s *SQLiteStore) GetPDF(id string) (*models.PDF, error) {
+	row := s.db.QueryRow(`SELECT `+pdfSelectCols+` FROM pdfs WHERE id = ?`, id)
+	p, err := scanPDFRow(row)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("pdf not found")
+	}
 	if err != nil {
-		return models.PDF{}, err
+		return nil, err
 	}
-	return p, nil
+	return &p, nil
+}
+
+func (s *SQLiteStore) SavePDF(p *models.PDF) error {
+	if p == nil {
+		return fmt.Errorf("pdf is nil")
+	}
+	if err := ValidatePDF(*p); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if p.ID == "" {
+		p.ID = uuid.NewString()
+		p.CreatedAt = now
+		p.IndexStatus = models.IndexStatusNone
+	}
+	p.UpdatedAt = now
+	if p.IndexStatus == "" {
+		p.IndexStatus = models.IndexStatusNone
+	}
+
+	var indexedAt any
+	if p.IndexedAt != nil {
+		indexedAt = formatTime(*p.IndexedAt)
+	}
+
+	_, err := s.db.Exec(`
+INSERT INTO pdfs (id, title, file_path, page_count, thumbnail_path, index_status, indexed_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  title = excluded.title,
+  file_path = excluded.file_path,
+  page_count = excluded.page_count,
+  thumbnail_path = excluded.thumbnail_path,
+  index_status = excluded.index_status,
+  indexed_at = excluded.indexed_at,
+  updated_at = excluded.updated_at
+`, p.ID, strings.TrimSpace(p.Title), p.FilePath, p.PageCount, nullStr(p.ThumbnailPath), string(p.IndexStatus), indexedAt, formatTime(p.CreatedAt), formatTime(p.UpdatedAt))
+	return err
 }
 
 func (s *SQLiteStore) ListGames(filter ListGamesFilter) ([]models.Game, error) {
@@ -389,66 +523,6 @@ func (s *SQLiteStore) GetRunningGame() (*models.Game, error) {
 	return &g, nil
 }
 
-func (s *SQLiteStore) ListPDFs() ([]models.PDF, error) {
-	rows, err := s.db.Query(`
-SELECT id, title, file_path, page_count, created_at, updated_at
-FROM pdfs ORDER BY title ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var pdfs []models.PDF
-	for rows.Next() {
-		p, err := scanPDF(rows)
-		if err != nil {
-			return nil, err
-		}
-		pdfs = append(pdfs, p)
-	}
-	return pdfs, rows.Err()
-}
-
-func (s *SQLiteStore) GetPDF(id string) (*models.PDF, error) {
-	row := s.db.QueryRow(`
-SELECT id, title, file_path, page_count, created_at, updated_at
-FROM pdfs WHERE id = ?`, id)
-	p, err := scanPDF(row)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("pdf not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-func (s *SQLiteStore) SavePDF(p *models.PDF) error {
-	if p == nil {
-		return fmt.Errorf("pdf is nil")
-	}
-	if err := ValidatePDF(*p); err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	if p.ID == "" {
-		p.ID = uuid.NewString()
-		p.CreatedAt = now
-	}
-	p.UpdatedAt = now
-
-	_, err := s.db.Exec(`
-INSERT INTO pdfs (id, title, file_path, page_count, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  title = excluded.title,
-  file_path = excluded.file_path,
-  page_count = excluded.page_count,
-  updated_at = excluded.updated_at
-`, p.ID, strings.TrimSpace(p.Title), p.FilePath, p.PageCount, formatTime(p.CreatedAt), formatTime(p.UpdatedAt))
-	return err
-}
-
 func (s *SQLiteStore) DeletePDF(id string) error {
 	refs, err := s.CountPDFGameRefs(id)
 	if err != nil {
@@ -476,7 +550,7 @@ func (s *SQLiteStore) CountPDFGameRefs(pdfID string) (int, error) {
 
 func (s *SQLiteStore) ListGamePDFs(gameID string) ([]GamePDFEntry, error) {
 	rows, err := s.db.Query(`
-SELECT p.id, p.title, p.file_path, p.page_count, p.created_at, p.updated_at, gp.sort_order
+SELECT p.id, p.title, p.file_path, p.page_count, p.thumbnail_path, p.index_status, p.indexed_at, p.created_at, p.updated_at, gp.sort_order
 FROM pdfs p
 JOIN game_pdfs gp ON gp.pdf_id = p.id
 WHERE gp.game_id = ?
@@ -489,13 +563,29 @@ ORDER BY gp.sort_order ASC`, gameID)
 		entry     GamePDFEntry
 		createdAt string
 		updatedAt string
+		indexedAt sql.NullString
 	}
 	var scanned []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.entry.ID, &r.entry.Title, &r.entry.FilePath, &r.entry.PageCount, &r.createdAt, &r.updatedAt, &r.entry.SortOrder); err != nil {
+		var thumbPath sql.NullString
+		var indexStatus string
+		if err := rows.Scan(&r.entry.ID, &r.entry.Title, &r.entry.FilePath, &r.entry.PageCount, &thumbPath, &indexStatus, &r.indexedAt, &r.createdAt, &r.updatedAt, &r.entry.SortOrder); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		r.entry.ThumbnailPath = thumbPath.String
+		r.entry.IndexStatus = models.IndexStatus(indexStatus)
+		if r.entry.IndexStatus == "" {
+			r.entry.IndexStatus = models.IndexStatusNone
+		}
+		if r.indexedAt.Valid {
+			t, err := parseTime(r.indexedAt.String)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			r.entry.IndexedAt = &t
 		}
 		scanned = append(scanned, r)
 	}
@@ -570,7 +660,7 @@ INSERT INTO game_pdfs (game_id, pdf_id, sort_order) VALUES (?, ?, ?)`, gameID, p
 
 func (s *SQLiteStore) ListTOCSections(pdfID string) ([]models.TOCSection, error) {
 	rows, err := s.db.Query(`
-SELECT id, pdf_id, title, start_page, end_page, sort_order
+SELECT id, pdf_id, title, start_page, end_page, sort_order, plain_text
 FROM toc_sections WHERE pdf_id = ? ORDER BY sort_order ASC`, pdfID)
 	if err != nil {
 		return nil, err
@@ -580,9 +670,10 @@ FROM toc_sections WHERE pdf_id = ? ORDER BY sort_order ASC`, pdfID)
 	var sections []models.TOCSection
 	for rows.Next() {
 		var sec models.TOCSection
-		if err := rows.Scan(&sec.ID, &sec.PDFID, &sec.Title, &sec.StartPage, &sec.EndPage, &sec.SortOrder); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.PDFID, &sec.Title, &sec.StartPage, &sec.EndPage, &sec.SortOrder, &sec.PlainText); err != nil {
 			return nil, err
 		}
+		sec.Indexed = sec.PlainText != ""
 		sections = append(sections, sec)
 	}
 	return sections, rows.Err()

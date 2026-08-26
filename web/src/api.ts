@@ -1,10 +1,14 @@
 export type PathStatus = "ok" | "missing";
+export type IndexStatus = "none" | "indexing" | "indexed" | "error";
 
 export interface PDF {
   id: string;
   title: string;
   file_path: string;
   page_count: number;
+  thumbnail_path?: string;
+  index_status: IndexStatus;
+  indexed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +26,26 @@ export interface TOCSection {
   start_page: number;
   end_page: number;
   sort_order: number;
+  indexed?: boolean;
+}
+
+export interface CreatePDFResult extends PDFSummary {
+  toc_extract_error?: string;
+}
+
+export interface ExtractTOCResult {
+  sections: TOCSection[];
+  page_count: number;
+  source?: string;
+}
+
+export type TOCImportSource = "pages" | "bookmarks";
+
+export interface IndexResult {
+  pdf_id: string;
+  index_status: IndexStatus;
+  page_count: number;
+  sections_indexed: number;
 }
 
 export interface Game {
@@ -83,8 +107,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   listPDFs: () => request<PDFSummary[]>("/api/pdfs"),
   getPDF: (id: string) => request<PDFSummary>(`/api/pdfs/${id}`),
-  createPDF: (data: { title: string; file_path: string }) =>
-    request<PDFSummary>("/api/pdfs", { method: "POST", body: JSON.stringify(data) }),
+  createPDF: (data: {
+    title: string;
+    file_path: string;
+    toc_source?: TOCImportSource;
+    toc_start_page?: number;
+    toc_end_page?: number;
+    toc_include_children?: boolean;
+  }) => request<CreatePDFResult>("/api/pdfs", { method: "POST", body: JSON.stringify(data) }),
   updatePDF: (id: string, data: Partial<Pick<PDF, "title" | "file_path" | "page_count">>) =>
     request<PDFSummary>(`/api/pdfs/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deletePDF: (id: string) => request<void>(`/api/pdfs/${id}`, { method: "DELETE" }),
@@ -92,6 +122,18 @@ export const api = {
   getTOC: (id: string) => request<TOCSection[]>(`/api/pdfs/${id}/toc`),
   saveTOC: (id: string, sections: TOCSection[]) =>
     request<TOCSection[]>(`/api/pdfs/${id}/toc`, { method: "PUT", body: JSON.stringify({ sections }) }),
+  extractTOC: (id: string, options: {
+    source: TOCImportSource;
+    start_page?: number;
+    end_page?: number;
+    include_children?: boolean;
+  }) =>
+    request<ExtractTOCResult>(`/api/pdfs/${id}/toc/extract`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+  indexPDF: (id: string) => request<IndexResult>(`/api/pdfs/${id}/index`, { method: "POST" }),
+  thumbnailURL: (id: string) => `/api/pdfs/${id}/thumbnail`,
 
   listGames: (filter: "active" | "archived" | "all" = "active") =>
     request<GameSummary[]>(`/api/games?filter=${filter}`),

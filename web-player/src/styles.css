@@ -1,0 +1,291 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1c232c;
+  --border: #2a3441;
+  --text: #e8edf2;
+  --muted: #8b98a8;
+  --accent: #5b8fd4;
+  --user: #3d8f7a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.player-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+}
+
+.player-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.game-name {
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+}
+
+.warn {
+  color: #c9a227;
+  margin: 0.25rem 0 0;
+}
+
+.chat-area {
+  flex: 1;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.msg {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.msg-user {
+  border-color: color-mix(in srgb, var(--user) 40%, var(--border));
+}
+
+.msg-assistant {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.msg-role {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.msg-body {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.markdown-body {
+  line-height: 1.55;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre {
+  margin: 0.5rem 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.25rem;
+}
+
+.markdown-body li + li {
+  margin-top: 0.25rem;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+}
+
+.markdown-body code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.markdown-body pre {
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted);
+}
+
+.markdown-body a {
+  color: var(--accent);
+}
+
+.citation-link {
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0 0.1em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.citation-link:hover,
+.citation-link:focus-visible {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.msg-sources {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+
+.msg-sources-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.msg-sources ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.msg-sources li {
+  margin: 0;
+}
+
+.source-chip {
+  font: inherit;
+  font-size: 0.82rem;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  cursor: help;
+}
+
+.source-ref {
+  position: relative;
+  display: inline-flex;
+}
+
+.source-flyover {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  transform: translateX(-50%);
+  width: min(18rem, 70vw);
+  padding: 0.65rem 0.75rem;
+  background: #111820;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.source-flyover strong {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+
+.source-flyover .pages {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 0.35rem;
+}
+
+.source-flyover p {
+  margin: 0;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  white-space: normal;
+}
+
+.source-ref:hover .source-flyover,
+.source-ref:focus-within .source-flyover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.error {
+  color: #c45c5c;
+}
+
+.sources {
+  display: none;
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat-form input {
+  flex: 1;
+  font: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+}
+
+.chat-form button {
+  font: inherit;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+}
+
+.chat-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -38,6 +38,8 @@ go.work.sum
 # Frontend
 web/node_modules/
 web/dist/
+web-player/node_modules/
+web-player/dist/
 
 # Local test fixtures (PDFs, etc.)
 fixtures/
