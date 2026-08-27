@@ -481,3 +481,146 @@ func cheatsheetCitationSnippet(text string) string {
 	}
 	return strings.Join(words[:cheatsheetCitationSnippetWords], " ") + "..."
 }
+
+// FormatSearchHits renders search hits as numbered excerpts for tool results.
+func FormatSearchHits(hits []models.SearchHit) string {
+	if len(hits) == 0 {
+		return "No matching rule excerpts found."
+	}
+	var b strings.Builder
+	for i, h := range hits {
+		fmt.Fprintf(&b, "\n[%d] %s — %s (pages %d-%d)\n%s\n",
+			i+1, h.PDFTitle, h.SectionTitle, h.StartPage, h.EndPage, h.Snippet)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// LookupCheatsheetByFeature returns cheatsheet entries for one feature across a game's PDFs.
+func LookupCheatsheetByFeature(st store.Store, gameID, featureID string) (string, error) {
+	featureID = strings.TrimSpace(featureID)
+	if featureID == "" {
+		return "", fmt.Errorf("feature_id is required")
+	}
+	metaByPDF, titles, catalog, err := gameIndexMeta(st, gameID)
+	if err != nil {
+		return "", err
+	}
+	if len(metaByPDF) == 0 {
+		return fmt.Sprintf("No cheatsheet entry for feature_id=%s in this game's indexed PDFs.", featureID), nil
+	}
+	featureFilter := map[string]struct{}{featureID: {}}
+	var cs strings.Builder
+	lines := 0
+	for pdfID, meta := range metaByPDF {
+		title := titles[pdfID]
+		for _, c := range meta.Cheatsheet {
+			if !cheatsheetEntryMatches(c, featureFilter) {
+				continue
+			}
+			if c.Definition == "" {
+				continue
+			}
+			name := featureDisplayName(catalog, c.FeatureID)
+			fmt.Fprintf(&cs, "- %s / %s (%s): %s\n", title, name, c.FeatureID, c.Definition)
+			for i, cit := range c.Citations {
+				writeCheatsheetCitationLine(&cs, i+1, cit)
+			}
+			lines++
+		}
+	}
+	if lines == 0 {
+		return fmt.Sprintf("No cheatsheet entry for feature_id=%s in this game's indexed PDFs.", featureID), nil
+	}
+	return strings.TrimSpace(cs.String()), nil
+}
+
+// LookupGlossaryByFeature returns book terminology and catalog synonyms for a feature.
+func LookupGlossaryByFeature(st store.Store, gameID, featureID string) (string, error) {
+	featureID = strings.TrimSpace(featureID)
+	if featureID == "" {
+		return "", fmt.Errorf("feature_id is required")
+	}
+	metaByPDF, titles, catalog, err := gameIndexMeta(st, gameID)
+	if err != nil {
+		return "", err
+	}
+	featureFilter := map[string]struct{}{featureID: {}}
+	return formatGlossaryLookup(metaByPDF, titles, catalog, featureFilter), nil
+}
+
+// LookupGlossaryByTerm resolves a term to feature(s) and returns glossary mappings.
+func LookupGlossaryByTerm(st store.Store, gameID, term string) (string, error) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return "", fmt.Errorf("term is required")
+	}
+	metaByPDF, titles, catalog, err := gameIndexMeta(st, gameID)
+	if err != nil {
+		return "", err
+	}
+	featureFilter := map[string]struct{}{}
+	if catalog != nil {
+		for _, id := range matchedFeatureIDs(term, metaByPDF, catalog) {
+			featureFilter[id] = struct{}{}
+		}
+	}
+	if len(featureFilter) == 0 {
+		return fmt.Sprintf("No glossary mapping found for term %q.", term), nil
+	}
+	return formatGlossaryLookup(metaByPDF, titles, catalog, featureFilter), nil
+}
+
+func formatGlossaryLookup(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, featureFilter map[string]struct{}) string {
+	lines := formatGlossaryLines(metaByPDF, pdfTitles, catalog, featureFilter)
+	var b strings.Builder
+	if len(lines) > 0 {
+		b.WriteString("Book terminology:\n")
+		b.WriteString(strings.Join(lines, "\n"))
+	}
+	var synLines []string
+	for id := range featureFilter {
+		if catalog == nil {
+			continue
+		}
+		if feat, ok := catalog.FeatureByID(id); ok && len(feat.Synonyms) > 0 {
+			name := feat.Name
+			if name == "" {
+				name = id
+			}
+			synLines = append(synLines, fmt.Sprintf("- %s (%s): %s", name, id, strings.Join(feat.Synonyms, ", ")))
+		}
+	}
+	sort.Strings(synLines)
+	if len(synLines) > 0 {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("Catalog synonyms:\n")
+		b.WriteString(strings.Join(synLines, "\n"))
+	}
+	if b.Len() == 0 {
+		return "No glossary entries found for the requested feature(s)."
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func gameIndexMeta(st store.Store, gameID string) (map[string]models.PDFIndexMeta, map[string]string, *rpgconcepts.ConceptCatalog, error) {
+	pdfs, err := st.ListGamePDFs(gameID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(pdfs) == 0 {
+		return map[string]models.PDFIndexMeta{}, map[string]string{}, loadConceptCatalogFromEnv(), nil
+	}
+	ids := make([]string, len(pdfs))
+	titles := map[string]string{}
+	for i, p := range pdfs {
+		ids[i] = p.ID
+		titles[p.ID] = p.Title
+	}
+	meta, err := st.ListPDFIndexMeta(ids)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return meta, titles, loadConceptCatalogFromEnv(), nil
+}
