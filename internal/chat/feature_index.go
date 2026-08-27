@@ -9,7 +9,8 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
-// BuildFeatureIndex returns a compact feature_id → name list for the game's indexed PDFs.
+// BuildFeatureIndex returns catalog feature entries detected in the game's indexed PDFs.
+// Only features present in index_meta.Features are included; Questions are omitted.
 func BuildFeatureIndex(st store.Store, gameID string) (string, error) {
 	pdfs, err := st.ListGamePDFs(gameID)
 	if err != nil {
@@ -38,28 +39,42 @@ func BuildFeatureIndex(st store.Store, gameID string) (string, error) {
 			}
 		}
 	}
+
 	if len(featureSet) == 0 {
-		for _, f := range catalog.Features {
-			if f.ID != "" {
-				featureSet[f.ID] = struct{}{}
-			}
-		}
+		return "No features detected in this game's indexed PDFs yet.", nil
 	}
 
-	ids := make([]string, 0, len(featureSet))
+	featureIDs := make([]string, 0, len(featureSet))
 	for id := range featureSet {
-		ids = append(ids, id)
+		featureIDs = append(featureIDs, id)
 	}
-	sort.Strings(ids)
+	sort.Strings(featureIDs)
 
 	var b strings.Builder
 	b.WriteString("Feature index (use feature_id values in tool calls):\n")
-	for _, id := range ids {
-		name := id
-		if feat, ok := catalog.FeatureByID(id); ok && strings.TrimSpace(feat.Name) != "" {
-			name = feat.Name
+	for _, id := range featureIDs {
+		if feat, ok := catalog.FeatureByID(id); ok {
+			b.WriteString(formatFeatureForChat(feat))
+			continue
 		}
-		fmt.Fprintf(&b, "- %s: %s\n", id, name)
+		fmt.Fprintf(&b, "- %s\n", id)
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+func formatFeatureForChat(f rpgconcepts.Feature) string {
+	name := strings.TrimSpace(f.Name)
+	if name == "" {
+		name = f.ID
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "- %s (%s)", f.ID, name)
+	if desc := strings.TrimSpace(f.Description); desc != "" {
+		fmt.Fprintf(&b, ": %s", desc)
+	}
+	b.WriteByte('\n')
+	if len(f.Synonyms) > 0 {
+		fmt.Fprintf(&b, "  Synonyms: %s\n", strings.Join(f.Synonyms, ", "))
+	}
+	return b.String()
 }

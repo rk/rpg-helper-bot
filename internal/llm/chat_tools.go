@@ -39,7 +39,7 @@ func ChatToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "lookup_cheatsheet",
-				Description: "Look up indexed cheatsheet summaries for a canonical feature. Call this first to understand how this game implements the feature before searching.",
+				Description: "Look up indexed cheatsheet summaries for a canonical feature. Call after lookup_glossary to understand how this game implements the feature before searching.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -56,7 +56,7 @@ func ChatToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "lookup_glossary",
-				Description: "Look up book-specific terminology and catalog synonyms for a feature or term. Use before search to enrich keywords.",
+				Description: "Look up book-specific terminology and catalog synonyms for a feature or term. Call this first to resolve word-choice ambiguity before cheatsheet lookup and search.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
