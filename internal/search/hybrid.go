@@ -8,6 +8,7 @@ import (
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/embed"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/textutil"
 )
@@ -23,12 +24,19 @@ type Service struct {
 	Store        store.Store
 	Embed        embed.Func
 	RewriteQuery QueryRewriteFunc
+	ConceptsPath string
 }
 
-func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.SearchHit, error) {
+type Result struct {
+	Hits  []models.SearchHit
+	Debug models.ChatSearchDebug
+}
+
+func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, error) {
 	query = strings.TrimSpace(query)
+	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
 	if query == "" {
-		return nil, nil
+		return &Result{Debug: debug}, nil
 	}
 
 	gamePDFs, err := s.Store.ListGamePDFs(gameID)
@@ -36,7 +44,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 		return nil, err
 	}
 	if len(gamePDFs) == 0 {
-		return nil, nil
+		return &Result{Debug: debug}, nil
 	}
 
 	pdfOrder := map[string]int{}
@@ -50,13 +58,30 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 
 	ftsQuery := query
 	if s.RewriteQuery != nil {
-		if rewritten, err := s.RewriteQuery(ctx, query); err == nil {
-			if rewritten = strings.TrimSpace(rewritten); rewritten != "" {
-				ftsQuery = rewritten
-				if ftsQuery != query {
-					log.Printf("search: FTS query rewritten %q -> %q", query, ftsQuery)
-				}
+		rewritten, rewriteErr := s.RewriteQuery(ctx, query)
+		if rewriteErr != nil {
+			debug.RewriteError = rewriteErr.Error()
+		} else if rewritten = strings.TrimSpace(rewritten); rewritten != "" {
+			ftsQuery = rewritten
+			debug.QueryRewritten = ftsQuery != query
+			if debug.QueryRewritten {
+				log.Printf("search: FTS query rewritten %q -> %q", query, ftsQuery)
 			}
+		}
+	}
+	debug.FTSQuery = ftsQuery
+
+	catalog := s.loadConceptCatalog()
+	if catalog != nil {
+		metaByPDF, err := s.Store.ListPDFIndexMeta(pdfIDs)
+		if err != nil {
+			return nil, err
+		}
+		expanded := ExpandFTSWithGlossary(query, ftsQuery, metaByPDF, catalog)
+		if expanded != ftsQuery {
+			debug.QueryRewritten = true
+			ftsQuery = expanded
+			debug.FTSQuery = ftsQuery
 		}
 	}
 
@@ -64,8 +89,9 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 	if err != nil {
 		return nil, err
 	}
+	debug.FTSCandidateCount = len(candidates)
 	if len(candidates) == 0 {
-		return nil, nil
+		return &Result{Debug: debug}, nil
 	}
 
 	queryVec, err := s.Embed(ctx, query)
@@ -74,6 +100,11 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 	}
 
 	hits := make([]models.SearchHit, 0, len(candidates))
+	type scoredHit struct {
+		hit      models.SearchHit
+		adjScore float64
+	}
+	scored := make([]scoredHit, 0, len(candidates))
 	for _, c := range candidates {
 		docVec, err := s.Embed(ctx, c.Title+"\n"+c.PlainText)
 		if err != nil {
@@ -81,7 +112,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 		}
 		score := embed.Cosine(queryVec, docVec)
 		snippet := snippet(c.PlainText, query, 240)
-		hits = append(hits, models.SearchHit{
+		h := models.SearchHit{
 			SectionID:    c.SectionID,
 			PDFID:        c.PDFID,
 			PDFTitle:     pdfTitle[c.PDFID],
@@ -90,22 +121,60 @@ func (s *Service) Search(ctx context.Context, gameID, query string) ([]models.Se
 			EndPage:      c.EndPage,
 			PDFSortOrder: pdfOrder[c.PDFID],
 			Score:        score,
+			FTSRank:      c.Rank,
 			Snippet:      snippet,
+		}
+		scored = append(scored, scoredHit{
+			hit:      h,
+			adjScore: adjustedScore(score, c.Title, c.PlainText, query),
 		})
 	}
 
-	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].Score != hits[j].Score {
-			return hits[i].Score > hits[j].Score
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].adjScore != scored[j].adjScore {
+			return scored[i].adjScore > scored[j].adjScore
 		}
 		// Later PDFs (higher sort_order) override on tie/conflict.
-		return hits[i].PDFSortOrder > hits[j].PDFSortOrder
+		return scored[i].hit.PDFSortOrder > scored[j].hit.PDFSortOrder
 	})
+
+	for _, sh := range scored {
+		hits = append(hits, sh.hit)
+	}
 
 	if len(hits) > finalResultLimit {
 		hits = hits[:finalResultLimit]
 	}
-	return hits, nil
+
+	debug.Hits = make([]models.ChatSearchHit, len(hits))
+	for i, h := range hits {
+		debug.Hits[i] = models.ChatSearchHit{
+			Rank:         i + 1,
+			SectionID:    h.SectionID,
+			PDFTitle:     h.PDFTitle,
+			SectionTitle: h.SectionTitle,
+			StartPage:    h.StartPage,
+			EndPage:      h.EndPage,
+			PDFSortOrder: h.PDFSortOrder,
+			EmbedScore:   h.Score,
+			FTSRank:      h.FTSRank,
+			Snippet:      textutil.NormalizePDFText(h.Snippet),
+		}
+	}
+
+	return &Result{Hits: hits, Debug: debug}, nil
+}
+
+func (s *Service) loadConceptCatalog() *rpgconcepts.ConceptCatalog {
+	path := s.ConceptsPath
+	if path == "" {
+		path = rpgconcepts.DefaultConceptsPath()
+	}
+	catalog, err := rpgconcepts.LoadConcepts(path)
+	if err != nil {
+		return nil
+	}
+	return catalog
 }
 
 func snippet(text, query string, maxLen int) string {

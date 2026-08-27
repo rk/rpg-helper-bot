@@ -28,4 +28,14 @@ func TestExtractBookmarkSections_swade(t *testing.T) {
 	if len(sections) < 5 {
 		t.Fatalf("expected at least 5 bookmark sections, got %d", len(sections))
 	}
+
+	titles := map[string]struct{}{}
+	for _, s := range sections {
+		titles[s.Title] = struct{}{}
+	}
+	for _, want := range []string{"Other Movement Issues", "Ranged Attacks", "Melee Attacks", "Attacks"} {
+		if _, ok := titles[want]; !ok {
+			t.Fatalf("expected bookmark section %q to be imported", want)
+		}
+	}
 }

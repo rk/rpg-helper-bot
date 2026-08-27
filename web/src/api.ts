@@ -48,6 +48,43 @@ export interface IndexResult {
   sections_indexed: number;
 }
 
+export interface IndexProgress {
+  pdf_id: string;
+  phase: string;
+  current: number;
+  total: number;
+  percent: number;
+  message: string;
+  active: boolean;
+}
+
+export interface PDFFeature {
+  feature_id: string;
+  sections: string[];
+  terms: string[];
+}
+
+export interface PDFGlossary {
+  feature_id: string;
+  pdf_term: string;
+  evidence?: string;
+}
+
+export interface CheatsheetEntry {
+  feature_id: string;
+  feature_name?: string;
+  pdf_terms: string[];
+  section: string;
+  start_page: number;
+}
+
+export interface PDFIndexMeta {
+  features: PDFFeature[];
+  glossary: PDFGlossary[];
+  cheatsheet: CheatsheetEntry[];
+  llm_glossary_skipped?: boolean;
+}
+
 export interface Game {
   id: string;
   name: string;
@@ -166,6 +203,10 @@ export const api = {
       body: JSON.stringify(options),
     }),
   indexPDF: (id: string) => request<IndexResult>(`/api/pdfs/${id}/index`, { method: "POST" }),
+  getIndexProgress: (id: string) => request<IndexProgress>(`/api/pdfs/${id}/index/progress`),
+  getIndexMeta: (id: string) => request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`),
+  saveIndexMeta: (id: string, meta: PDFIndexMeta) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`, { method: "PUT", body: JSON.stringify(meta) }),
   thumbnailURL: (id: string) => `/api/pdfs/${id}/thumbnail`,
 
   listGames: (filter: "active" | "archived" | "all" = "active") =>

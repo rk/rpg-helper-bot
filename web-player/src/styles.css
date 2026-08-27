@@ -289,3 +289,92 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.search-debug {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 55%, var(--panel));
+}
+
+.search-debug summary {
+  cursor: pointer;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+}
+
+.search-debug summary::-webkit-details-marker {
+  display: none;
+}
+
+.search-debug summary::before {
+  content: "▸ ";
+}
+
+.search-debug[open] summary::before {
+  content: "▾ ";
+}
+
+.search-debug-body {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.search-debug-meta {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0 0 0.65rem;
+}
+
+.search-debug-meta dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.search-debug-meta dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.88rem;
+}
+
+.search-debug-note {
+  margin: 0 0 0.65rem;
+}
+
+.search-debug-table-wrap {
+  overflow-x: auto;
+}
+
+.search-debug-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.search-debug-table th,
+.search-debug-table td {
+  padding: 0.35rem 0.45rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.search-debug-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.search-hit-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  cursor: help;
+}
+
+.search-hit-pdf {
+  color: var(--muted);
+  font-size: 0.78rem;
+}

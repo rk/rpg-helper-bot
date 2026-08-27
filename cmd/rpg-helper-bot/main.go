@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -53,13 +52,9 @@ func main() {
 		log.Fatalf("vectors: %v", err)
 	}
 
-	ctx := context.Background()
-	indexerSvc := &indexing.Service{Store: sqliteStore, Vectors: vectorStore, DataDir: dataDir}
-	if err := indexerSvc.RebuildVectors(ctx); err != nil {
-		log.Printf("rebuild vectors: %v", err)
-	}
-
 	llmClient := llm.NewClient()
+
+	indexerSvc := &indexing.Service{Store: sqliteStore, Vectors: vectorStore, DataDir: dataDir, LLM: llmClient}
 
 	searchSvc := &search.Service{
 		Store:        sqliteStore,

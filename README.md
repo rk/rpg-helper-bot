@@ -53,3 +53,43 @@ RPG_HELPER_EMBED_MODEL=nomic-embed-text
 ```
 
 Chat and embedding providers are configured independently (`llama.cpp`, `ollama`, or `hash` for offline embeddings).
+
+## RPG concept cheatsheet
+
+[`data/rpg-concepts.yaml`](data/rpg-concepts.yaml) defines canonical RPG features and synonym families (skill check, rate of fire, wild die, etc.). Extend this file as you encounter new cross-book terminology patterns.
+
+During PDF indexing, the app:
+
+1. Scans section text for synonym matches (offline).
+2. Optionally refines book-specific terms via the chat LLM (e.g. mapping SWADE "Tests" to `skill_check`).
+3. Stores a per-PDF **feature list**, **glossary**, and **cheatsheet** in `pdfs.index_meta` (SQLite).
+
+Re-index a PDF to refresh its glossary after editing `rpg-concepts.yaml`.
+
+Override the concepts file path with `RPG_HELPER_CONCEPTS_FILE`.
+
+## Search behavior
+
+| Stage | Query used |
+|-------|------------|
+| Embedding similarity (rerank) | Original user question only |
+| Title boost / table penalty | Original user question only |
+| FTS keyword retrieval | Original + LLM rewrite + glossary PDF terms + preserved dice tokens |
+| Snippet highlighting | Original user question |
+
+Dice notation (`2D6`, `d8`, `2D6-2`, dice-pool `2D`) is preserved in FTS queries and passed to LLMs without normalization.
+
+## LLM system prompts
+
+All chat-model system prompts are customizable. Defaults live in [`prompts/`](prompts/):
+
+| Prompt | Default file | Env override | When used |
+|--------|--------------|--------------|-----------|
+| RPG domain (shared) | `prompts/shared/rpg-domain.md` | `RPG_HELPER_PROMPT_RPG_DOMAIN` | Prepended to all prompts below |
+| Chat / rules Q&A | `prompts/chat-system.md` | `RPG_HELPER_PROMPT_CHAT` | `/api/chat` streaming answers |
+| Search rewrite | `prompts/search-rewrite-system.md` | `RPG_HELPER_PROMPT_SEARCH_REWRITE` | FTS keyword expansion before search |
+| Glossary extract | `prompts/glossary-extract-system.md` | `RPG_HELPER_PROMPT_GLOSSARY` | Index-time PDF glossary refinement |
+
+Set `RPG_HELPER_PROMPTS_DIR` to use an alternate prompts directory. Individual env vars override specific files. Embedded defaults apply if files are missing.
+
+Chat prompt placeholders: `{{RPG_DOMAIN}}`, `{{GLOSSARY}}`, `{{GAME_NOTES}}`, `{{EXCERPTS}}`.

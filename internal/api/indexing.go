@@ -12,6 +12,7 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/textutil"
 )
 
@@ -23,7 +24,13 @@ type Services struct {
 
 func (s *Server) registerIndexRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/pdfs/{id}/index", s.handleIndexPDF)
+	mux.HandleFunc("GET /api/pdfs/{id}/index/progress", s.handleIndexProgress)
 	mux.HandleFunc("GET /api/pdfs/{id}/thumbnail", s.handlePDFThumbnail)
+}
+
+func (s *Server) handleIndexProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	writeJSON(w, http.StatusOK, indexing.GetIndexProgress(id))
 }
 
 func (s *Server) handleIndexPDF(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +94,14 @@ func decodeChatJSON(r *http.Request, dst any) error {
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 
+func chatGlossaryText(st store.Store, gameID string) string {
+	text, err := search.GlossaryForGame(st, gameID)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	running, err := s.Store.GetRunningGame()
 	if err != nil {
@@ -109,13 +124,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var hits []models.SearchHit
+	var searchResult *search.Result
 	if s.Search != nil {
-		hits, err = s.Search.Search(r.Context(), running.ID, userMsg)
+		searchResult, err = s.Search.Search(r.Context(), running.ID, userMsg)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+	}
+
+	var hits []models.SearchHit
+	if searchResult != nil {
+		hits = searchResult.Hits
 	}
 
 	sources := make([]models.ChatSource, 0, len(hits))
@@ -134,7 +154,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RPG-Sources-Enc", "base64")
 	}
 
-	systemPrompt := llm.BuildSystemPrompt(running, hits)
+	if searchResult != nil {
+		debug := searchResult.Debug
+		debug.LLMConfigured = s.LLM != nil
+		if b, err := json.Marshal(debug); err == nil {
+			w.Header().Set("X-RPG-Search-Debug", base64.StdEncoding.EncodeToString(b))
+			w.Header().Set("X-RPG-Search-Debug-Enc", "base64")
+		}
+	}
+
+	systemPrompt := llm.BuildSystemPrompt(running, hits, chatGlossaryText(s.Store, running.ID))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 

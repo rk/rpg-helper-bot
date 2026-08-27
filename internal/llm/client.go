@@ -48,22 +48,25 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-func BuildSystemPrompt(game *models.Game, hits []models.SearchHit) string {
-	var b strings.Builder
-	b.WriteString("You are a helpful tabletop RPG rules assistant. Answer using ONLY the provided rule excerpts. ")
-	b.WriteString("If the answer is not in the excerpts, say you could not find it in the indexed rules.\n")
-	b.WriteString("Format answers in Markdown. Cite excerpts inline as [1], [2], etc. matching the excerpt numbers below.\n")
-	if game != nil && strings.TrimSpace(game.Notes) != "" {
-		b.WriteString("\nTable notes / optional rules in use:\n")
-		b.WriteString(game.Notes)
-		b.WriteString("\n")
-	}
-	b.WriteString("\nRule excerpts (later books override earlier ones on conflict):\n")
+func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary string) string {
+	var excerpts strings.Builder
 	for i, h := range hits {
-		fmt.Fprintf(&b, "\n[%d] %s — %s (pages %d-%d)\n%s\n",
+		fmt.Fprintf(&excerpts, "\n[%d] %s — %s (pages %d-%d)\n%s\n",
 			i+1, h.PDFTitle, h.SectionTitle, h.StartPage, h.EndPage, h.Snippet)
 	}
-	return b.String()
+	gameNotes := ""
+	if game != nil && strings.TrimSpace(game.Notes) != "" {
+		gameNotes = "Table notes / optional rules in use:\n" + game.Notes + "\n"
+	}
+	glossaryBlock := ""
+	if strings.TrimSpace(glossary) != "" {
+		glossaryBlock = strings.TrimSpace(glossary) + "\n"
+	}
+	return renderPrompt(PromptChatSystem, map[string]string{
+		"GLOSSARY":   glossaryBlock,
+		"GAME_NOTES": gameNotes,
+		"EXCERPTS":   excerpts.String(),
+	})
 }
 
 func (c *Client) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {

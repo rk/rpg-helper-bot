@@ -7,6 +7,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/pdfcpu/pdfcpu v0.9.1
 	github.com/philippgille/chromem-go v0.7.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.37.0
 )
 

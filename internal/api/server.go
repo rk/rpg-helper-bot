@@ -55,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/running", s.handleGetRunning)
 
 	s.registerIndexRoutes(mux)
+	s.registerIndexMetaRoutes(mux)
 
 	if s.StaticDir != "" {
 		fileServer := http.FileServer(http.Dir(s.StaticDir))
@@ -69,7 +70,7 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Expose-Headers", "X-RPG-Sources, X-RPG-Sources-Enc")
+		w.Header().Set("Access-Control-Expose-Headers", "X-RPG-Sources, X-RPG-Sources-Enc, X-RPG-Search-Debug, X-RPG-Search-Debug-Enc")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

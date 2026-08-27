@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, PDFSummary, TOCSection, TOCImportSource } from "../api";
 import { EmptyState, PathBadge } from "../components/Badges";
+import { useIndexing } from "../components/IndexingContext";
+import PDFLearningsEditor from "../components/PDFLearningsEditor";
 import { useToast } from "../components/Toast";
 
 function newSection(): TOCSection {
@@ -19,6 +21,7 @@ export default function LibraryDetailPage() {
   const { pdfId } = useParams<{ pdfId: string }>();
   const navigate = useNavigate();
   const { showError, showInfo } = useToast();
+  const { runIndex } = useIndexing();
 
   const [pdf, setPdf] = useState<PDFSummary | null>(null);
   const [sections, setSections] = useState<TOCSection[]>([]);
@@ -84,8 +87,10 @@ export default function LibraryDetailPage() {
     if (!pdfId) return;
     setIndexing(true);
     try {
-      if (dirty) await saveTOC();
-      await api.indexPDF(pdfId);
+      await runIndex(pdfId, async () => {
+        if (dirty) await saveTOC();
+        await api.indexPDF(pdfId);
+      });
       showInfo("PDF indexed");
       await load();
     } catch (err) {
@@ -386,6 +391,8 @@ export default function LibraryDetailPage() {
                 </button>
               </div>
             </div>
+
+            <PDFLearningsEditor pdfId={pdfId} indexed={pdf.index_status === "indexed"} />
           </>
         )}
       </section>

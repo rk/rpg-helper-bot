@@ -203,24 +203,21 @@ func dedupeTOCEntries(entries []tocEntry) []tocEntry {
 	if len(entries) == 0 {
 		return nil
 	}
-	byPage := map[int]tocEntry{}
-	order := make([]int, 0, len(entries))
+	seen := map[string]struct{}{}
+	out := make([]tocEntry, 0, len(entries))
 	for _, e := range entries {
-		if prev, ok := byPage[e.StartPage]; ok {
-			if len(e.Title) <= len(prev.Title) {
-				continue
-			}
-		} else {
-			order = append(order, e.StartPage)
+		key := dedupeKey(e)
+		if _, ok := seen[key]; ok {
+			continue
 		}
-		byPage[e.StartPage] = e
-	}
-	sort.Ints(order)
-	out := make([]tocEntry, 0, len(order))
-	for _, page := range order {
-		out = append(out, byPage[page])
+		seen[key] = struct{}{}
+		out = append(out, e)
 	}
 	return out
+}
+
+func dedupeKey(e tocEntry) string {
+	return fmt.Sprintf("%d:%s", e.StartPage, strings.ToLower(strings.TrimSpace(e.Title)))
 }
 
 // BuildTOCSections assigns end pages: next start - 1, last section through pageCount.

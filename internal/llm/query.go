@@ -4,12 +4,9 @@ import (
 	"context"
 	"strings"
 	"time"
-)
 
-const searchRewriteSystemPrompt = `You rewrite tabletop RPG rules questions into concise keyword lists for full-text search.
-Include the original important terms plus closely related words, synonyms, and word stems.
-Example: "necromancer" should also include necromancy; "shooting" may include ranged gunfire.
-Reply with ONLY space-separated keywords. No punctuation, labels, or explanation. At most 12 words.`
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpg"
+)
 
 func (c *Client) RewriteSearchQuery(ctx context.Context, query string) (string, error) {
 	query = strings.TrimSpace(query)
@@ -23,7 +20,8 @@ func (c *Client) RewriteSearchQuery(ctx context.Context, query string) (string, 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	raw, err := c.Complete(ctx, searchRewriteSystemPrompt, query)
+	systemPrompt := renderPrompt(PromptSearchRewrite, nil)
+	raw, err := c.Complete(ctx, systemPrompt, query)
 	if err != nil {
 		return "", err
 	}
@@ -31,7 +29,8 @@ func (c *Client) RewriteSearchQuery(ctx context.Context, query string) (string, 
 	if rewritten == "" {
 		return query, nil
 	}
-	return mergeSearchQueries(query, rewritten), nil
+	merged := mergeSearchQueries(query, rewritten)
+	return rpg.PreserveDiceInFTSQuery(query, merged), nil
 }
 
 func parseSearchKeywords(raw string) string {

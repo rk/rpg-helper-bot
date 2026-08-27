@@ -3,10 +3,13 @@ package indexing
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 	"time"
 
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/vectors"
 )
@@ -17,6 +20,8 @@ type Service struct {
 	Store   store.Store
 	Vectors *vectors.Store
 	DataDir string
+	LLM     *llm.Client
+	ConceptsPath string
 }
 
 type Result struct {
@@ -50,6 +55,8 @@ func (s *Service) IndexPDF(ctx context.Context, pdfID string) (*Result, error) {
 		return nil, fmt.Errorf("add TOC sections before indexing")
 	}
 
+	beginProgress(pdfID, len(sections))
+
 	pageCount, err := PageCount(pdf.FilePath)
 	if err == nil && pageCount > 0 {
 		pdf.PageCount = pageCount
@@ -57,16 +64,26 @@ func (s *Service) IndexPDF(ctx context.Context, pdfID string) (*Result, error) {
 	}
 
 	thumbPath := filepath.Join(s.DataDir, "thumbnails", pdfID+".png")
+	progressThumbnail(pdfID, len(sections))
 	if err := RenderThumbnail(pdf.FilePath, thumbPath, thumbnailMaxPx); err != nil {
 		_ = s.Store.SetPDFIndexStatus(pdfID, models.IndexStatusError, nil)
+		progressError(pdfID, "thumbnail failed")
 		return nil, fmt.Errorf("thumbnail: %w", err)
+	}
+
+	splitTexts, err := s.buildSplitPageTexts(pdf.FilePath, sections)
+	if err != nil {
+		_ = s.Store.SetPDFIndexStatus(pdfID, models.IndexStatusError, nil)
+		return nil, err
 	}
 
 	indexed := 0
 	for _, sec := range sections {
-		text, err := ExtractPages(pdf.FilePath, sec.StartPage, sec.EndPage)
+		progressSection(pdfID, indexed+1, len(sections), sec.Title)
+		text, err := sectionPlainText(pdf.FilePath, sec, splitTexts)
 		if err != nil {
 			_ = s.Store.SetPDFIndexStatus(pdfID, models.IndexStatusError, nil)
+			progressError(pdfID, sec.Title)
 			return nil, fmt.Errorf("section %q: %w", sec.Title, err)
 		}
 		if err := s.Store.SaveSectionText(sec.ID, text); err != nil {
@@ -80,13 +97,33 @@ func (s *Service) IndexPDF(ctx context.Context, pdfID string) (*Result, error) {
 		indexed++
 	}
 
+	sections, err = s.Store.ListTOCSections(pdfID)
+	if err != nil {
+		return nil, err
+	}
+	conceptPath := s.ConceptsPath
+	if conceptPath == "" {
+		conceptPath = rpgconcepts.DefaultConceptsPath()
+	}
+	if catalog, err := rpgconcepts.LoadConcepts(conceptPath); err != nil {
+		log.Printf("index: concepts load skipped: %v", err)
+	} else {
+		progressGlossary(pdfID)
+		meta := CompileAndRefinePDFIndexMeta(ctx, s.LLM, catalog, sections)
+		if err := s.Store.SavePDFIndexMeta(pdfID, meta); err != nil {
+			return nil, fmt.Errorf("save index meta: %w", err)
+		}
+	}
+
 	now := time.Now().UTC()
+	progressFinalize(pdfID)
 	if err := s.Store.SetPDFThumbnail(pdfID, thumbPath); err != nil {
 		return nil, err
 	}
 	if err := s.Store.SetPDFIndexStatus(pdfID, models.IndexStatusIndexed, &now); err != nil {
 		return nil, err
 	}
+	progressDone(pdfID, indexed)
 
 	return &Result{
 		PDFID:           pdfID,
@@ -111,4 +148,40 @@ func (s *Service) RebuildVectors(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) buildSplitPageTexts(pdfPath string, sections []models.TOCSection) (map[string]map[string]string, error) {
+	groups := SamePageSectionGroups(sections)
+	if len(groups) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]map[string]string, len(groups))
+	for key, group := range groups {
+		fullText, err := ExtractPages(pdfPath, key.start, key.end)
+		if err != nil {
+			return nil, err
+		}
+		titles := make([]string, len(group))
+		for i, sec := range group {
+			titles[i] = sec.Title
+		}
+		out[pageRangeKey(key)] = SplitPageTextByHeadings(fullText, titles)
+	}
+	return out, nil
+}
+
+func sectionPlainText(pdfPath string, sec models.TOCSection, splitTexts map[string]map[string]string) (string, error) {
+	if sec.StartPage == sec.EndPage && splitTexts != nil {
+		if byTitle, ok := splitTexts[pageRangeKey(pageRange{sec.StartPage, sec.EndPage})]; ok {
+			if text, ok := byTitle[sec.Title]; ok && text != "" {
+				return text, nil
+			}
+		}
+	}
+	return ExtractPages(pdfPath, sec.StartPage, sec.EndPage)
+}
+
+func pageRangeKey(key pageRange) string {
+	return fmt.Sprintf("%d-%d", key.start, key.end)
 }

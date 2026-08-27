@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 type SQLiteStore struct {
 	db *sql.DB
@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS pdfs (
   thumbnail_path TEXT,
   index_status TEXT NOT NULL DEFAULT 'none',
   indexed_at TEXT,
+  index_meta TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -153,10 +154,25 @@ func (s *SQLiteStore) migrateForward(from int) error {
 		from = 3
 	}
 	if from == 3 {
-		return s.migrateToV4()
+		if err := s.migrateToV4(); err != nil {
+			return err
+		}
+		from = 4
+	}
+	if from == 4 {
+		return s.migrateToV5()
 	}
 	if from < 3 {
 		return fmt.Errorf("unsupported migration from version %d", from)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateToV5() error {
+	if !s.columnExists("pdfs", "index_meta") {
+		if _, err := s.db.Exec(`ALTER TABLE pdfs ADD COLUMN index_meta TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
 	}
 	return nil
 }

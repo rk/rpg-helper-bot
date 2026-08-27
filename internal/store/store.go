@@ -60,4 +60,8 @@ type Store interface {
 	SaveSectionText(sectionID, plainText string) error
 	ListIndexedSections() ([]models.TOCSection, error)
 	FTSSearch(pdfIDs []string, query string, limit int) ([]FTSCandidate, error)
+
+	GetPDFIndexMeta(pdfID string) (*models.PDFIndexMeta, error)
+	SavePDFIndexMeta(pdfID string, meta *models.PDFIndexMeta) error
+	ListPDFIndexMeta(pdfIDs []string) (map[string]models.PDFIndexMeta, error)
 }

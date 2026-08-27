@@ -1,27 +1,35 @@
 import { useChat } from "@ai-sdk/react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ChatSource, fetchRunning, RunningGame } from "./api";
+import { ChatSource, fetchRunning, RunningGame, ChatSearchDebug } from "./api";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { SearchDebugPanel } from "./SearchDebugPanel";
 import { SourceList } from "./SourceFlyover";
-import { parseSourcesHeader } from "./sources";
+import { parseSearchDebugHeader, parseSourcesHeader } from "./sources";
 
 export default function App() {
   const [game, setGame] = useState<RunningGame | null>(null);
   const [sourcesByMessageId, setSourcesByMessageId] = useState<Record<string, ChatSource[]>>({});
+  const [searchDebugByMessageId, setSearchDebugByMessageId] = useState<Record<string, ChatSearchDebug | null>>({});
   const [loadError, setLoadError] = useState("");
   const pendingSources = useRef<ChatSource[]>([]);
+  const pendingSearchDebug = useRef<ChatSearchDebug | null>(null);
 
   const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
     api: "/api/chat",
     streamProtocol: "text",
     onResponse(response) {
       pendingSources.current = parseSourcesHeader(response);
+      pendingSearchDebug.current = parseSearchDebugHeader(response);
     },
     onFinish(message) {
       if (message.role === "assistant") {
         setSourcesByMessageId((prev) => ({
           ...prev,
           [message.id]: pendingSources.current,
+        }));
+        setSearchDebugByMessageId((prev) => ({
+          ...prev,
+          [message.id]: pendingSearchDebug.current,
         }));
       }
     },
@@ -53,11 +61,13 @@ export default function App() {
         )}
         {messages.map((m) => {
           const msgSources = m.role === "assistant" ? sourcesByMessageId[m.id] ?? [] : [];
+          const msgSearchDebug = m.role === "assistant" ? searchDebugByMessageId[m.id] ?? null : null;
           return (
             <div key={m.id} className={`msg msg-${m.role}`}>
               <div className="msg-role">{m.role === "user" ? "You" : "Assistant"}</div>
               {m.role === "assistant" ? (
                 <>
+                  <SearchDebugPanel debug={msgSearchDebug} />
                   <MarkdownMessage content={m.content} sources={msgSources} />
                   <SourceList sources={msgSources} />
                 </>

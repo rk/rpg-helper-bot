@@ -48,10 +48,11 @@ func TestHybridSearchRespectsGameScope(t *testing.T) {
 	}
 
 	svc := &search.Service{Store: s, Embed: embed.HashEmbed}
-	hits, err := svc.Search(context.Background(), game.ID, "wild attack combat")
+	result, err := svc.Search(context.Background(), game.ID, "wild attack combat")
 	if err != nil {
 		t.Fatal(err)
 	}
+	hits := result.Hits
 	if len(hits) == 0 {
 		t.Fatal("expected search hits")
 	}
@@ -101,19 +102,19 @@ func TestHybridSearchUsesRewrittenFTSQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) == 0 {
+	if len(hits.Hits) == 0 {
 		t.Fatal("expected rewritten FTS query to match necromancy section")
 	}
-	if hits[0].SectionTitle != "Dark Magic" {
-		t.Fatalf("expected dark magic section, got %q", hits[0].SectionTitle)
+	if hits.Hits[0].SectionTitle != "Dark Magic" {
+		t.Fatalf("expected dark magic section, got %q", hits.Hits[0].SectionTitle)
 	}
 
 	svcNoRewrite := &search.Service{Store: s, Embed: embed.HashEmbed}
-	hits, err = svcNoRewrite.Search(context.Background(), game.ID, "necromancer")
+	noRewrite, err := svcNoRewrite.Search(context.Background(), game.ID, "necromancer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) != 0 {
-		t.Fatalf("expected no hits without rewrite, got %d", len(hits))
+	if len(noRewrite.Hits) != 0 {
+		t.Fatalf("expected no hits without rewrite, got %d", len(noRewrite.Hits))
 	}
 }

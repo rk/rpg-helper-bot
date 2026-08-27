@@ -1,0 +1,63 @@
+features:
+  - id: skill
+    name: Skill
+    description: "A Skill represents a character's proficiency in a particular area. Usually referred to as Skill."
+    synonyms:
+      - skill
+  - id: attribute
+    name: Attribute
+    description: "An Attribute represents a character's inherent traits, such as strength, dexterity, or intelligence."
+    synonyms:
+      - attribute
+      - ability
+      - trait
+  - id: skill_check
+    name: Skill Check
+    description: "Rolling dice to resolve an action using a skill, trait, or attribute."
+    synonyms:
+      - test
+      - check
+      - roll
+  - id: saving_throw
+    name: Saving Throw
+    description: "Rolling dice to resist an effect, such as a spell or attack. Some systems use an attribute, a derived stat, or sometimes a skill check. Variance is important to document."
+    synonyms:
+      - saving throw
+      - saving test
+      - resistance test
+      - resistance roll
+      - "[attribute] save"
+  - id: attribute_check
+    name: Attribute Check
+    description: "Rolling dice to resolve an action using an attribute, such as strength, dexterity, or intelligence. Usually identical to skill_check mechanically."
+    synonyms:
+      - attribute check
+      - attribute test
+      - attribute roll
+  - id: benny
+    name: Benny
+    description: "A meta-currency players (and GMs) spend for rerolls, soak, or other benefits."
+    synonyms:
+      - benny
+      - bennies
+      - hero point
+      - fate point
+      - drama point
+      - karma point
+  - id: opposed_roll
+    name: Opposed Roll
+    description: "Two characters roll against each other; higher success wins."
+    synonyms:
+      - opposed roll
+      - opposed check
+      - opposed test
+      - contest
+  - id: target_number
+    name: Target Number
+    description: "The difficulty or threshold a roll must meet or exceed."
+    synonyms:
+      - target number
+      - difficulty
+      - tn
+      - dc
+      - target
