@@ -27,8 +27,13 @@ func TestIndexMetaGetPut(t *testing.T) {
 	}
 
 	meta := models.PDFIndexMeta{
-		Glossary: []models.PDFGlossary{{FeatureID: "skill_check", PDFTerm: "Tests", Evidence: "Support Vs. Test"}},
-		Features: []models.PDFFeature{{FeatureID: "skill_check", Terms: []string{"test"}, Sections: []string{"Tests"}}},
+		Glossary: []models.PDFGlossaryEntry{{FeatureID: "skill_check", Terms: []string{"Tests"}}},
+		Features: []string{"skill_check"},
+		Cheatsheet: []models.CheatsheetEntry{{
+			FeatureID:  "skill_check",
+			Definition: "Roll a trait die against a target number.",
+			Citations:  []models.CheatsheetCitation{{SectionTitle: "Tests", StartPage: 42}},
+		}},
 	}
 	body, _ := json.Marshal(meta)
 	putReq := httptest.NewRequest(http.MethodPut, "/api/pdfs/"+pdf.ID+"/index-meta", bytes.NewReader(body))
@@ -42,7 +47,10 @@ func TestIndexMetaGetPut(t *testing.T) {
 	if err := json.Unmarshal(putRec.Body.Bytes(), &saved); err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.Glossary) != 1 || saved.Glossary[0].PDFTerm != "Tests" {
+	if len(saved.Glossary) != 1 || saved.Glossary[0].Terms[0] != "Tests" {
 		t.Fatalf("saved glossary: %+v", saved.Glossary)
+	}
+	if len(saved.Features) != 1 || saved.Features[0] != "skill_check" {
+		t.Fatalf("saved features: %+v", saved.Features)
 	}
 }

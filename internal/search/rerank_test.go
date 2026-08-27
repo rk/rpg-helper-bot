@@ -33,8 +33,8 @@ Repeating Crossbow 12/24/48 2d6 2 d6 Reload 2`
 
 func TestAdjustedScorePrefersProseSection(t *testing.T) {
 	embedScore := 0.72
-	prose := adjustedScore(embedScore, "Ranged Attacks", "Rate of Fire is how many shots a weapon fires.", "ranged attacks rate fire")
-	table := adjustedScore(embedScore, "Black Powder Weapons", "Crossbow 15/30/60 2d6 1 d6\nPistol 5/10/20 2d6 1 d6", "repeating crossbow rate fire")
+	prose := adjustedScore(embedScore, "sec1", "Ranged Attacks", "Rate of Fire is how many shots a weapon fires.", "ranged attacks rate fire", nil)
+	table := adjustedScore(embedScore, "sec2", "Black Powder Weapons", "Crossbow 15/30/60 2d6 1 d6\nPistol 5/10/20 2d6 1 d6", "repeating crossbow rate fire", nil)
 	if prose <= table {
 		t.Fatalf("prose adjusted %f should beat table adjusted %f", prose, table)
 	}

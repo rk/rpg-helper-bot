@@ -1,39 +1,45 @@
 import { useEffect, useState } from "react";
-import { api, CheatsheetEntry, PDFGlossary, PDFIndexMeta, PDFFeature } from "../api";
+import { api, CheatsheetCitation, CheatsheetEntry, PDFGlossaryEntry, PDFIndexMeta } from "../api";
 import { EmptyState } from "./Badges";
+import { useIndexing } from "./IndexingContext";
 import { useToast } from "./Toast";
 
 function emptyMeta(): PDFIndexMeta {
-  return { features: [], glossary: [], cheatsheet: [], llm_glossary_skipped: false };
+  return { glossary: [], features: [], cheatsheet: [], llm_learnings_skipped: false };
 }
 
-function newGlossaryRow(): PDFGlossary {
-  return { feature_id: "", pdf_term: "", evidence: "" };
-}
-
-function newFeatureRow(): PDFFeature {
-  return { feature_id: "", sections: [], terms: [] };
+function newGlossaryRow(): PDFGlossaryEntry {
+  return { feature_id: "", terms: [] };
 }
 
 function newCheatsheetRow(): CheatsheetEntry {
-  return { feature_id: "", feature_name: "", pdf_terms: [], section: "", start_page: 1 };
+  return { feature_id: "", definition: "", citations: [] };
+}
+
+function newCitation(): CheatsheetCitation {
+  return { section_title: "", start_page: 1 };
 }
 
 export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; indexed: boolean }) {
   const { showError, showInfo } = useToast();
+  const { runIndex } = useIndexing();
   const [meta, setMeta] = useState<PDFIndexMeta | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [featureInput, setFeatureInput] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
       const data = await api.getIndexMeta(pdfId);
       setMeta(data);
+      setFeatureInput(data.features.join(", "));
       setDirty(false);
     } catch (err) {
       showError(err instanceof Error ? err.message : "Failed to load learnings");
       setMeta(emptyMeta());
+      setFeatureInput("");
     } finally {
       setLoading(false);
     }
@@ -48,6 +54,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     try {
       const saved = await api.saveIndexMeta(pdfId, meta);
       setMeta(saved);
+      setFeatureInput(saved.features.join(", "));
       setDirty(false);
       showInfo("Index learnings saved");
     } catch (err) {
@@ -55,20 +62,11 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     }
   };
 
-  const updateGlossary = (index: number, patch: Partial<PDFGlossary>) => {
+  const updateGlossary = (index: number, patch: Partial<PDFGlossaryEntry>) => {
     setMeta((prev) => {
       if (!prev) return prev;
       const glossary = prev.glossary.map((row, i) => (i === index ? { ...row, ...patch } : row));
       return { ...prev, glossary };
-    });
-    setDirty(true);
-  };
-
-  const updateFeature = (index: number, patch: Partial<PDFFeature>) => {
-    setMeta((prev) => {
-      if (!prev) return prev;
-      const features = prev.features.map((row, i) => (i === index ? { ...row, ...patch } : row));
-      return { ...prev, features };
     });
     setDirty(true);
   };
@@ -82,20 +80,53 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     setDirty(true);
   };
 
-  const listField = (values: string[], onChange: (values: string[]) => void, placeholder: string) => (
-    <input
-      value={values.join(", ")}
-      placeholder={placeholder}
-      onChange={(e) =>
-        onChange(
-          e.target.value
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        )
-      }
-    />
-  );
+  const updateCitation = (cheatIndex: number, citIndex: number, patch: Partial<CheatsheetCitation>) => {
+    setMeta((prev) => {
+      if (!prev) return prev;
+      const cheatsheet = prev.cheatsheet.map((row, i) => {
+        if (i !== cheatIndex) return row;
+        const citations = row.citations.map((cit, j) => (j === citIndex ? { ...cit, ...patch } : cit));
+        return { ...row, citations };
+      });
+      return { ...prev, cheatsheet };
+    });
+    setDirty(true);
+  };
+
+  const syncFeatures = (value: string) => {
+    setFeatureInput(value);
+    const features = value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setMeta((prev) => (prev ? { ...prev, features } : prev));
+    setDirty(true);
+  };
+
+  const cheatsheetFeatureIds = (data: PDFIndexMeta) =>
+    new Set(data.cheatsheet.map((row) => row.feature_id.trim()).filter(Boolean));
+
+  const needsCheatsheetRetry = (data: PDFIndexMeta) => {
+    if (!indexed || data.features.length === 0) return false;
+    const done = cheatsheetFeatureIds(data);
+    return data.llm_learnings_skipped || data.features.some((id) => !done.has(id));
+  };
+
+  const retryCheatsheet = async () => {
+    setRebuilding(true);
+    try {
+      await runIndex(pdfId, async () => {
+        await api.rebuildCheatsheet(pdfId);
+      });
+      await load();
+      showInfo("Cheatsheet rebuild finished");
+    } catch (err) {
+      await load();
+      showError(err instanceof Error ? err.message : "Cheatsheet rebuild failed");
+    } finally {
+      setRebuilding(false);
+    }
+  };
 
   if (loading) {
     return <p className="muted">Loading index learnings…</p>;
@@ -111,16 +142,22 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
         <div>
           <h2>Index learnings</h2>
           <p className="hint">
-            Terminology and features detected during indexing. Used for search keyword expansion and chat context.
+            LLM-extracted terminology, detected features, and cheatsheet definitions. Used for search expansion and
+            chat context.
           </p>
         </div>
         <div className="header-actions">
-          {meta.llm_glossary_skipped && (
-            <span className="badge badge-warn" title="LLM glossary refinement was skipped or failed">
-              offline only
+          {meta.llm_learnings_skipped && (
+            <span className="badge badge-warn" title="LLM learnings were skipped or failed">
+              LLM skipped
             </span>
           )}
-          <button type="button" className="btn" onClick={load}>
+          {needsCheatsheetRetry(meta) && (
+            <button type="button" className="btn" onClick={retryCheatsheet} disabled={rebuilding || dirty}>
+              {rebuilding ? "Rebuilding cheatsheet…" : "Retry cheatsheet"}
+            </button>
+          )}
+          <button type="button" className="btn" onClick={load} disabled={rebuilding}>
             Reload
           </button>
           <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
@@ -132,12 +169,12 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       {!indexed && !hasContent ? (
         <EmptyState
           title="No learnings yet"
-          description="Index this PDF to build glossary mappings and feature detections from your concept cheatsheet."
+          description="Index this PDF to run the 3-pass LLM learnings pipeline (glossary, features, cheatsheet)."
         />
       ) : !hasContent ? (
         <EmptyState
           title="Empty learnings"
-          description="Indexing completed but no glossary entries were found. Check data/rpg-concepts.yaml and re-index, or add mappings manually below."
+          description="Indexing completed but no learnings were produced. Re-index with LLM configured, or add entries manually."
           action={
             <button
               type="button"
@@ -167,7 +204,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
             + Add mapping
           </button>
         </div>
-        <p className="hint">Maps this book&apos;s terms to canonical feature IDs from rpg-concepts.yaml.</p>
+        <p className="hint">Book terms grouped by canonical feature ID for FTS query expansion.</p>
         {meta.glossary.length === 0 ? (
           <p className="muted">No glossary mappings.</p>
         ) : (
@@ -176,8 +213,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
               <thead>
                 <tr>
                   <th>Feature ID</th>
-                  <th>Book term</th>
-                  <th>Evidence</th>
+                  <th>Book terms (comma-separated)</th>
                   <th></th>
                 </tr>
               </thead>
@@ -193,16 +229,16 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
                     </td>
                     <td>
                       <input
-                        value={row.pdf_term}
-                        onChange={(e) => updateGlossary(i, { pdf_term: e.target.value })}
-                        placeholder="Tests"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={row.evidence ?? ""}
-                        onChange={(e) => updateGlossary(i, { evidence: e.target.value })}
-                        placeholder="Section or quote"
+                        value={row.terms.join(", ")}
+                        onChange={(e) =>
+                          updateGlossary(i, {
+                            terms: e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="Tests, Trait roll"
                       />
                     </td>
                     <td>
@@ -228,59 +264,13 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       <div className="learnings-section card">
         <div className="learnings-section-header">
           <h3>Features detected</h3>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setMeta({ ...meta, features: [...meta.features, newFeatureRow()] });
-              setDirty(true);
-            }}
-          >
-            + Add feature
-          </button>
         </div>
-        {meta.features.length === 0 ? (
-          <p className="muted">No features detected.</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Feature ID</th>
-                  <th>Terms found</th>
-                  <th>Sections</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {meta.features.map((row, i) => (
-                  <tr key={`f-${i}`}>
-                    <td>
-                      <input
-                        value={row.feature_id}
-                        onChange={(e) => updateFeature(i, { feature_id: e.target.value })}
-                      />
-                    </td>
-                    <td>{listField(row.terms, (terms) => updateFeature(i, { terms }), "rate of fire, rof")}</td>
-                    <td>{listField(row.sections, (sections) => updateFeature(i, { sections }), "Ranged Attacks")}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn icon danger"
-                        onClick={() => {
-                          setMeta({ ...meta, features: meta.features.filter((_, j) => j !== i) });
-                          setDirty(true);
-                        }}
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <p className="hint">Feature IDs present in this PDF (omit concepts this game does not use).</p>
+        <input
+          value={featureInput}
+          onChange={(e) => syncFeatures(e.target.value)}
+          placeholder="skill_check, wild_die, rate_of_fire"
+        />
       </div>
 
       <div className="learnings-section card">
@@ -300,67 +290,113 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
         {meta.cheatsheet.length === 0 ? (
           <p className="muted">No cheatsheet rows.</p>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Feature</th>
-                  <th>Name</th>
-                  <th>Book terms</th>
-                  <th>Section</th>
-                  <th>Page</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {meta.cheatsheet.map((row, i) => (
-                  <tr key={`c-${i}`}>
-                    <td>
-                      <input
-                        value={row.feature_id}
-                        onChange={(e) => updateCheatsheet(i, { feature_id: e.target.value })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={row.feature_name ?? ""}
-                        onChange={(e) => updateCheatsheet(i, { feature_name: e.target.value })}
-                      />
-                    </td>
-                    <td>
-                      {listField(row.pdf_terms, (pdf_terms) => updateCheatsheet(i, { pdf_terms }), "Tests, Test")}
-                    </td>
-                    <td>
-                      <input
-                        value={row.section}
-                        onChange={(e) => updateCheatsheet(i, { section: e.target.value })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min={1}
-                        value={row.start_page}
-                        onChange={(e) => updateCheatsheet(i, { start_page: Number(e.target.value) })}
-                      />
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn icon danger"
-                        onClick={() => {
-                          setMeta({ ...meta, cheatsheet: meta.cheatsheet.filter((_, j) => j !== i) });
-                          setDirty(true);
-                        }}
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          meta.cheatsheet.map((row, i) => (
+            <div key={`c-${i}`} className="cheatsheet-row">
+              <div className="cheatsheet-row-header">
+                <label>
+                  Feature ID
+                  <input
+                    value={row.feature_id}
+                    onChange={(e) => updateCheatsheet(i, { feature_id: e.target.value })}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn icon danger"
+                  onClick={() => {
+                    setMeta({ ...meta, cheatsheet: meta.cheatsheet.filter((_, j) => j !== i) });
+                    setDirty(true);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <label>
+                Definition
+                <textarea
+                  rows={3}
+                  value={row.definition}
+                  onChange={(e) => updateCheatsheet(i, { definition: e.target.value })}
+                />
+              </label>
+              <div className="citations-block">
+                <div className="learnings-section-header">
+                  <h4>Citations</h4>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      updateCheatsheet(i, { citations: [...row.citations, newCitation()] });
+                    }}
+                  >
+                    + Add citation
+                  </button>
+                </div>
+                {row.citations.length === 0 ? (
+                  <p className="muted">No citations.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Section title</th>
+                          <th>Start page</th>
+                          <th>End page</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {row.citations.map((cit, j) => (
+                          <tr key={`cit-${i}-${j}`}>
+                            <td>
+                              <input
+                                value={cit.section_title}
+                                onChange={(e) => updateCitation(i, j, { section_title: e.target.value })}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={1}
+                                value={cit.start_page}
+                                onChange={(e) => updateCitation(i, j, { start_page: Number(e.target.value) })}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                value={cit.end_page ?? ""}
+                                placeholder="optional"
+                                onChange={(e) =>
+                                  updateCitation(i, j, {
+                                    end_page: e.target.value ? Number(e.target.value) : undefined,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn icon danger"
+                                onClick={() => {
+                                  updateCheatsheet(i, {
+                                    citations: row.citations.filter((_, k) => k !== j),
+                                  });
+                                }}
+                              >
+                                ×
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>

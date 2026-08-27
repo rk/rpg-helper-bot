@@ -58,31 +58,29 @@ export interface IndexProgress {
   active: boolean;
 }
 
-export interface PDFFeature {
+export interface PDFGlossaryEntry {
   feature_id: string;
-  sections: string[];
   terms: string[];
 }
 
-export interface PDFGlossary {
-  feature_id: string;
-  pdf_term: string;
-  evidence?: string;
+export interface CheatsheetCitation {
+  section_id?: string;
+  section_title: string;
+  start_page: number;
+  end_page?: number;
 }
 
 export interface CheatsheetEntry {
   feature_id: string;
-  feature_name?: string;
-  pdf_terms: string[];
-  section: string;
-  start_page: number;
+  definition: string;
+  citations: CheatsheetCitation[];
 }
 
 export interface PDFIndexMeta {
-  features: PDFFeature[];
-  glossary: PDFGlossary[];
+  glossary: PDFGlossaryEntry[];
+  features: string[];
   cheatsheet: CheatsheetEntry[];
-  llm_glossary_skipped?: boolean;
+  llm_learnings_skipped?: boolean;
 }
 
 export interface Game {
@@ -207,6 +205,8 @@ export const api = {
   getIndexMeta: (id: string) => request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`),
   saveIndexMeta: (id: string, meta: PDFIndexMeta) =>
     request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`, { method: "PUT", body: JSON.stringify(meta) }),
+  rebuildCheatsheet: (id: string) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-cheatsheet`, { method: "POST" }),
   thumbnailURL: (id: string) => `/api/pdfs/${id}/thumbnail`,
 
   listGames: (filter: "active" | "archived" | "all" = "active") =>

@@ -58,13 +58,23 @@ Chat and embedding providers are configured independently (`llama.cpp`, `ollama`
 
 [`data/rpg-concepts.yaml`](data/rpg-concepts.yaml) defines canonical RPG features and synonym families (skill check, rate of fire, wild die, etc.). Extend this file as you encounter new cross-book terminology patterns.
 
-During PDF indexing, the app:
+During PDF indexing, the app runs a **3-pass LLM pipeline** (when the chat LLM is configured):
 
-1. Scans section text for synonym matches (offline).
-2. Optionally refines book-specific terms via the chat LLM (e.g. mapping SWADE "Tests" to `skill_check`).
-3. Stores a per-PDF **feature list**, **glossary**, and **cheatsheet** in `pdfs.index_meta` (SQLite).
+1. **Glossary** — builds a word-frequency dictionary from the full indexed text (offline), then one LLM call maps top tokens to catalog feature terms.
+2. **Feature detection** — one LLM call over word-frequency TSV + glossary (offline token-match candidates as hints).
+3. **Cheatsheet** — per detected feature, a concise definition plus citation list (section title + page range).
 
-Re-index a PDF to refresh its glossary after editing `rpg-concepts.yaml`.
+Results are stored in `pdfs.index_meta` (SQLite) as:
+
+- **Glossary:** `[{ feature_id, terms[] }]`
+- **Features:** `string[]` of feature IDs present in this PDF
+- **Cheatsheet:** `[{ feature_id, definition, citations[] }]`
+
+If the LLM is unavailable, learnings are empty and `llm_learnings_skipped` is set.
+
+Glossary and feature detection each use a single LLM call over the top **1000** word-frequency tokens. Cheatsheet uses chunked section excerpts (up to **1000 words** each). Each LLM call has a **120s** timeout.
+
+**Re-index PDFs** after deploying schema or prompt changes to regenerate learnings.
 
 Override the concepts file path with `RPG_HELPER_CONCEPTS_FILE`.
 
@@ -88,7 +98,9 @@ All chat-model system prompts are customizable. Defaults live in [`prompts/`](pr
 | RPG domain (shared) | `prompts/shared/rpg-domain.md` | `RPG_HELPER_PROMPT_RPG_DOMAIN` | Prepended to all prompts below |
 | Chat / rules Q&A | `prompts/chat-system.md` | `RPG_HELPER_PROMPT_CHAT` | `/api/chat` streaming answers |
 | Search rewrite | `prompts/search-rewrite-system.md` | `RPG_HELPER_PROMPT_SEARCH_REWRITE` | FTS keyword expansion before search |
-| Glossary extract | `prompts/glossary-extract-system.md` | `RPG_HELPER_PROMPT_GLOSSARY` | Index-time PDF glossary refinement |
+| Glossary extract | `prompts/glossary-extract-system.md` | `RPG_HELPER_PROMPT_GLOSSARY` | Index pass 1: book terminology |
+| Feature detect | `prompts/feature-detect-system.md` | `RPG_HELPER_PROMPT_FEATURE_DETECT` | Index pass 2: feature presence |
+| Cheatsheet extract | `prompts/cheatsheet-extract-system.md` | `RPG_HELPER_PROMPT_CHEATSHEET` | Index pass 3: definitions + citations |
 
 Set `RPG_HELPER_PROMPTS_DIR` to use an alternate prompts directory. Individual env vars override specific files. Embedded defaults apply if files are missing.
 

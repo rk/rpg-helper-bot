@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, PDFSummary, TOCSection, TOCImportSource } from "../api";
-import { EmptyState, PathBadge } from "../components/Badges";
 import { useIndexing } from "../components/IndexingContext";
+import PDFBaseTab from "../components/PDFBaseTab";
 import PDFLearningsEditor from "../components/PDFLearningsEditor";
+import PDFSectionsTab from "../components/PDFSectionsTab";
 import { useToast } from "../components/Toast";
+
+type DetailTab = "base" | "sections" | "learnings";
 
 function newSection(): TOCSection {
   return {
@@ -17,12 +20,19 @@ function newSection(): TOCSection {
   };
 }
 
+function parseTab(value: string | null): DetailTab {
+  if (value === "sections" || value === "learnings") return value;
+  return "base";
+}
+
 export default function LibraryDetailPage() {
   const { pdfId } = useParams<{ pdfId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { showError, showInfo } = useToast();
   const { runIndex } = useIndexing();
 
+  const [tab, setTab] = useState<DetailTab>(() => parseTab(searchParams.get("tab")));
   const [pdf, setPdf] = useState<PDFSummary | null>(null);
   const [sections, setSections] = useState<TOCSection[]>([]);
   const [title, setTitle] = useState("");
@@ -35,6 +45,15 @@ export default function LibraryDetailPage() {
   const [tocImportSource, setTocImportSource] = useState<TOCImportSource>("bookmarks");
   const [includeBookmarkChildren, setIncludeBookmarkChildren] = useState(true);
   const [extracting, setExtracting] = useState(false);
+
+  useEffect(() => {
+    setTab(parseTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  const selectTab = (next: DetailTab) => {
+    setTab(next);
+    setSearchParams(next === "base" ? {} : { tab: next }, { replace: true });
+  };
 
   const load = async () => {
     if (!pdfId) return;
@@ -186,213 +205,65 @@ export default function LibraryDetailPage() {
           <p className="muted">Loading…</p>
         ) : (
           <>
-            <div className="pane-header">
-              <div className="title-row">
-                {pdf.index_status === "indexed" && pdfId && (
-                  <img src={api.thumbnailURL(pdfId)} alt="" className="pdf-thumb" />
-                )}
-                <h1>{pdf.title}</h1>
-              </div>
-              <div className="header-actions">
-                <PathBadge status={pdf.path_status} />
-                <span className="badge badge-index">{pdf.index_status}</span>
-                <button type="button" className="btn primary" onClick={indexPDF} disabled={indexing || sections.length === 0}>
-                  {indexing ? "Indexing…" : "Index PDF"}
-                </button>
-                <button type="button" className="btn" onClick={probePath}>
-                  Check path
-                </button>
-                <button type="button" className="btn danger" onClick={deletePDF} disabled={pdf.game_count > 0}>
-                  Delete
-                </button>
-              </div>
-            </div>
+            <nav className="nav-tabs detail-tabs" aria-label="PDF detail sections">
+              <button type="button" className={tab === "base" ? "active" : ""} onClick={() => selectTab("base")}>
+                Base
+              </button>
+              <button type="button" className={tab === "sections" ? "active" : ""} onClick={() => selectTab("sections")}>
+                Sections
+              </button>
+              <button
+                type="button"
+                className={tab === "learnings" ? "active" : ""}
+                onClick={() => selectTab("learnings")}
+              >
+                Learnings
+              </button>
+            </nav>
 
-            <div className="card form-grid">
-              <label>
-                Title
-                <input value={title} onChange={(e) => setTitle(e.target.value)} />
-              </label>
-              <label>
-                File path
-                <input
-                  value={filePath}
-                  onChange={(e) => setFilePath(e.target.value)}
-                  className={pdf.path_status === "missing" ? "input-error" : ""}
-                />
-              </label>
-              <label>
-                Page count
-                <input
-                  type="number"
-                  min={0}
-                  value={pageCount}
-                  onChange={(e) => setPageCount(Number(e.target.value))}
-                />
-              </label>
-              <div className="form-actions">
-                <button type="button" className="btn primary" onClick={savePDF}>
-                  Save PDF
-                </button>
-              </div>
-              {pdf.path_status === "missing" && (
-                <p className="warning">This file path could not be found. Update the path and save.</p>
-              )}
-            </div>
+            {tab === "base" && (
+              <PDFBaseTab
+                pdf={pdf}
+                pdfId={pdfId}
+                title={title}
+                setTitle={setTitle}
+                filePath={filePath}
+                setFilePath={setFilePath}
+                pageCount={pageCount}
+                setPageCount={setPageCount}
+                savePDF={savePDF}
+                probePath={probePath}
+                deletePDF={deletePDF}
+                indexPDF={indexPDF}
+                indexing={indexing}
+                sectionCount={sections.length}
+              />
+            )}
 
-            <div className="section-block">
-              <div className="pane-header">
-                <h2>Table of Contents</h2>
-                <button type="button" className="btn" onClick={addSection}>
-                  + Add section
-                </button>
-              </div>
+            {tab === "sections" && (
+              <PDFSectionsTab
+                sections={sections}
+                dirty={dirty}
+                tocStartPage={tocStartPage}
+                setTocStartPage={setTocStartPage}
+                tocEndPage={tocEndPage}
+                setTocEndPage={setTocEndPage}
+                tocImportSource={tocImportSource}
+                setTocImportSource={setTocImportSource}
+                includeBookmarkChildren={includeBookmarkChildren}
+                setIncludeBookmarkChildren={setIncludeBookmarkChildren}
+                extracting={extracting}
+                pathMissing={pdf.path_status === "missing"}
+                importSections={importSections}
+                saveTOC={saveTOC}
+                addSection={addSection}
+                updateSection={updateSection}
+                moveSection={moveSection}
+                removeSection={removeSection}
+              />
+            )}
 
-              <div className="toc-extract-panel card">
-                <p className="hint">
-                  Import sections automatically, then review and save. End pages are set to the page before the next
-                  section starts.
-                </p>
-                <div className="toc-import-modes">
-                  <label className="radio-row">
-                    <input
-                      type="radio"
-                      name="toc-import-detail"
-                      checked={tocImportSource === "bookmarks"}
-                      onChange={() => setTocImportSource("bookmarks")}
-                    />
-                    PDF bookmarks
-                  </label>
-                  <label className="radio-row">
-                    <input
-                      type="radio"
-                      name="toc-import-detail"
-                      checked={tocImportSource === "pages"}
-                      onChange={() => setTocImportSource("pages")}
-                    />
-                    ToC pages
-                  </label>
-                </div>
-                {tocImportSource === "bookmarks" ? (
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={includeBookmarkChildren}
-                      onChange={(e) => setIncludeBookmarkChildren(e.target.checked)}
-                    />
-                    Include nested bookmarks
-                  </label>
-                ) : (
-                  <div className="toc-extract-row">
-                    <label>
-                      ToC start
-                      <input
-                        type="number"
-                        min={1}
-                        value={tocStartPage}
-                        onChange={(e) => setTocStartPage(Number(e.target.value))}
-                      />
-                    </label>
-                    <label>
-                      ToC end
-                      <input
-                        type="number"
-                        min={1}
-                        value={tocEndPage}
-                        onChange={(e) => setTocEndPage(Number(e.target.value))}
-                      />
-                    </label>
-                  </div>
-                )}
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    className="btn primary"
-                    onClick={importSections}
-                    disabled={extracting || pdf.path_status === "missing"}
-                  >
-                    {extracting ? "Importing…" : "Import sections"}
-                  </button>
-                </div>
-              </div>
-
-              {sections.length === 0 ? (
-                <EmptyState
-                  title="No sections"
-                  description="Define sections with title and page ranges for future search."
-                  action={
-                    <button type="button" className="btn primary" onClick={addSection}>
-                      Add first section
-                    </button>
-                  }
-                />
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Title</th>
-                        <th>Start</th>
-                        <th>End</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sections.map((sec, i) => (
-                        <tr key={sec.id || `new-${i}`}>
-                          <td>
-                            <input
-                              value={sec.title}
-                              onChange={(e) => updateSection(i, { title: e.target.value })}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              min={1}
-                              value={sec.start_page}
-                              onChange={(e) => updateSection(i, { start_page: Number(e.target.value) })}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              min={1}
-                              value={sec.end_page}
-                              onChange={(e) => updateSection(i, { end_page: Number(e.target.value) })}
-                            />
-                          </td>
-                          <td className="row-actions">
-                            <button type="button" className="btn icon" onClick={() => moveSection(i, -1)} disabled={i === 0}>
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              className="btn icon"
-                              onClick={() => moveSection(i, 1)}
-                              disabled={i === sections.length - 1}
-                            >
-                              ↓
-                            </button>
-                            <button type="button" className="btn icon danger" onClick={() => removeSection(i)}>
-                              ×
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <div className="form-actions">
-                <button type="button" className="btn primary" onClick={saveTOC} disabled={!dirty}>
-                  Save sections
-                </button>
-              </div>
-            </div>
-
-            <PDFLearningsEditor pdfId={pdfId} indexed={pdf.index_status === "indexed"} />
+            {tab === "learnings" && <PDFLearningsEditor pdfId={pdfId} indexed={pdf.index_status === "indexed"} />}
           </>
         )}
       </section>

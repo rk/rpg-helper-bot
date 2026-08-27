@@ -9,11 +9,18 @@ const (
 	titleMatchBoostPerTerm = 0.06
 	maxTitleMatchBoost     = 0.24
 	maxTablePenalty        = 0.18
+	citationBoost          = 0.08
 )
 
 // adjustedScore applies lightweight rerank nudges on top of embedding similarity.
-func adjustedScore(embedScore float64, sectionTitle, plainText, originalQuery string) float64 {
-	return embedScore + titleMatchBoost(sectionTitle, originalQuery) - tableDensityPenalty(plainText)
+func adjustedScore(embedScore float64, sectionID, sectionTitle, plainText, originalQuery string, citedSections map[string]struct{}) float64 {
+	score := embedScore + titleMatchBoost(sectionTitle, originalQuery) - tableDensityPenalty(plainText)
+	if citedSections != nil {
+		if _, ok := citedSections[sectionID]; ok {
+			score += citationBoost
+		}
+	}
+	return score
 }
 
 func titleMatchBoost(title, originalQuery string) float64 {

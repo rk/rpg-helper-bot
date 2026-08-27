@@ -9,24 +9,32 @@ import (
 type PromptID string
 
 const (
-	PromptChatSystem      PromptID = "chat-system"
-	PromptSearchRewrite   PromptID = "search-rewrite"
-	PromptGlossaryExtract PromptID = "glossary"
-	PromptRPGDomain       PromptID = "rpg-domain"
+	PromptChatSystem        PromptID = "chat-system"
+	PromptSearchRewrite     PromptID = "search-rewrite"
+	PromptGlossaryExtract   PromptID = "glossary"
+	PromptFeatureDetect     PromptID = "feature-detect"
+	PromptCheatsheetExtract PromptID = "cheatsheet"
+	PromptRPGDomain         PromptID = "rpg-domain"
+	PromptJSONOutput        PromptID = "json-output"
 )
 
 var defaultPromptFiles = map[PromptID]string{
-	PromptChatSystem:      "chat-system.md",
-	PromptSearchRewrite:   "search-rewrite-system.md",
-	PromptGlossaryExtract: "glossary-extract-system.md",
-	PromptRPGDomain:       filepath.Join("shared", "rpg-domain.md"),
+	PromptChatSystem:        "chat-system.md",
+	PromptSearchRewrite:     "search-rewrite-system.md",
+	PromptGlossaryExtract:   "glossary-extract-system.md",
+	PromptFeatureDetect:     "feature-detect-system.md",
+	PromptCheatsheetExtract: "cheatsheet-extract-system.md",
+	PromptRPGDomain:         filepath.Join("shared", "rpg-domain.md"),
+	PromptJSONOutput:        filepath.Join("shared", "json-output.md"),
 }
 
 var defaultPromptEnv = map[PromptID]string{
-	PromptChatSystem:      "RPG_HELPER_PROMPT_CHAT",
-	PromptSearchRewrite:   "RPG_HELPER_PROMPT_SEARCH_REWRITE",
-	PromptGlossaryExtract: "RPG_HELPER_PROMPT_GLOSSARY",
-	PromptRPGDomain:       "RPG_HELPER_PROMPT_RPG_DOMAIN",
+	PromptChatSystem:        "RPG_HELPER_PROMPT_CHAT",
+	PromptSearchRewrite:     "RPG_HELPER_PROMPT_SEARCH_REWRITE",
+	PromptGlossaryExtract:   "RPG_HELPER_PROMPT_GLOSSARY",
+	PromptFeatureDetect:     "RPG_HELPER_PROMPT_FEATURE_DETECT",
+	PromptCheatsheetExtract: "RPG_HELPER_PROMPT_CHEATSHEET",
+	PromptRPGDomain:         "RPG_HELPER_PROMPT_RPG_DOMAIN",
 }
 
 var embeddedDefaults = map[PromptID]string{
@@ -53,9 +61,36 @@ Reply with ONLY space-separated keywords. No punctuation, labels, or explanation
 `,
 	PromptGlossaryExtract: `{{RPG_DOMAIN}}
 
-You analyze indexed RPG rulebook excerpts and map book-specific terminology to canonical RPG feature IDs.
-Reply with ONLY valid JSON: {"glossary":[{"feature_id":"...","pdf_term":"...","evidence":"..."}]}
-Use feature_id values from the provided catalog only.`,
+{{JSON_OUTPUT}}
+
+You map book word-frequency tokens to canonical RPG feature IDs.
+You receive a catalog and a TSV of top document tokens with counts.
+Reply with this JSON shape: {"glossary":[{"feature_id":"...","terms":["..."]}]}
+Use feature_id values from the catalog only. Return terms in natural book casing.`,
+	PromptFeatureDetect: `{{RPG_DOMAIN}}
+
+{{JSON_OUTPUT}}
+
+You determine which canonical features an RPG rulebook actually uses from its word-frequency dictionary.
+You receive catalog, glossary, optional offline candidates, and a TSV of top document tokens.
+Reply with this JSON shape: {"features":["skill_check","wild_die"]}
+Use feature_id values from the catalog only.`,
+	PromptCheatsheetExtract: `{{RPG_DOMAIN}}
+
+{{JSON_OUTPUT}}
+
+You write concise rules cheatsheet entries for one RPG feature from rulebook excerpts.
+You receive a draft entry from prior chunks and new section excerpts. Refine and return the full updated entry.
+Reply with this JSON shape: {"feature_id":"...","definition":"...","citations":[{"section_title":"...","start_page":1}]}`,
+	PromptJSONOutput: `## Output format
+
+Your entire reply must be one raw JSON value with no surrounding text.
+
+- Do not wrap the JSON in markdown code fences.
+- Do not add prose, labels, or explanations before or after the JSON.
+- Do not use // or /* */ comments inside the JSON.
+- Use standard JSON: double-quoted keys and strings, no trailing commas.
+- Keep each string value on one line (use spaces, not literal line breaks).`,
 	PromptRPGDomain: `## Dice notation
 
 Preserve dice notation exactly as written. Do not expand, normalize, or paraphrase dice expressions.
@@ -101,12 +136,25 @@ func promptsDir() string {
 
 func renderPrompt(id PromptID, vars map[string]string) string {
 	out := LoadPrompt(id)
+	if usesJSONOutputRules(id) {
+		out = strings.ReplaceAll(out, "{{JSON_OUTPUT}}", strings.TrimSpace(LoadPrompt(PromptJSONOutput)))
+	}
+	out = strings.ReplaceAll(out, "{{JSON_OUTPUT}}", "")
 	for k, v := range vars {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
 	}
 	// Remove unused placeholders.
-	for _, key := range []string{"RPG_DOMAIN", "GLOSSARY", "GAME_NOTES", "EXCERPTS"} {
+	for _, key := range []string{"RPG_DOMAIN", "JSON_OUTPUT", "GLOSSARY", "GAME_NOTES", "EXCERPTS"} {
 		out = strings.ReplaceAll(out, "{{"+key+"}}", "")
 	}
 	return strings.TrimSpace(out) + "\n"
+}
+
+func usesJSONOutputRules(id PromptID) bool {
+	switch id {
+	case PromptGlossaryExtract, PromptFeatureDetect, PromptCheatsheetExtract:
+		return true
+	default:
+		return false
+	}
 }

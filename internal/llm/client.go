@@ -36,9 +36,15 @@ type Message struct {
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model          string          `json:"model"`
+	Messages       []Message       `json:"messages"`
+	Stream         bool            `json:"stream"`
+	Format         string          `json:"format,omitempty"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+}
+
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
 type chatResponse struct {
@@ -70,14 +76,28 @@ func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary stri
 }
 
 func (c *Client) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
-	body, _ := json.Marshal(chatRequest{
+	return c.complete(ctx, systemPrompt, userMessage, false)
+}
+
+// CompleteJSON requests structured JSON from the chat API (Ollama format + OpenAI response_format).
+func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	return c.complete(ctx, systemPrompt, userMessage, true)
+}
+
+func (c *Client) complete(ctx context.Context, systemPrompt, userMessage string, jsonMode bool) (string, error) {
+	reqBody := chatRequest{
 		Model: c.Model,
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMessage},
 		},
 		Stream: false,
-	})
+	}
+	if jsonMode {
+		reqBody.Format = "json"
+		reqBody.ResponseFormat = &responseFormat{Type: "json_object"}
+	}
+	body, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err

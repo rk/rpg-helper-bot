@@ -72,8 +72,10 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 	debug.FTSQuery = ftsQuery
 
 	catalog := s.loadConceptCatalog()
+	var metaByPDF map[string]models.PDFIndexMeta
 	if catalog != nil {
-		metaByPDF, err := s.Store.ListPDFIndexMeta(pdfIDs)
+		var err error
+		metaByPDF, err = s.Store.ListPDFIndexMeta(pdfIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -83,6 +85,11 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 			ftsQuery = expanded
 			debug.FTSQuery = ftsQuery
 		}
+	}
+
+	citedSections := map[string]struct{}{}
+	if catalog != nil && metaByPDF != nil {
+		citedSections = CitationSectionIDs(query, metaByPDF, catalog)
 	}
 
 	candidates, err := s.Store.FTSSearch(pdfIDs, ftsQuery, ftsCandidateLimit)
@@ -126,7 +133,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		}
 		scored = append(scored, scoredHit{
 			hit:      h,
-			adjScore: adjustedScore(score, c.Title, c.PlainText, query),
+			adjScore: adjustedScore(score, c.SectionID, c.Title, c.PlainText, query, citedSections),
 		})
 	}
 

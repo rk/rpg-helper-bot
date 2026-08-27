@@ -18,13 +18,9 @@ func (s *SQLiteStore) GetPDFIndexMeta(pdfID string) (*models.PDFIndexMeta, error
 		return nil, err
 	}
 	if !raw.Valid || raw.String == "" {
-		return &models.PDFIndexMeta{}, nil
+		return models.EmptyPDFIndexMeta(), nil
 	}
-	var meta models.PDFIndexMeta
-	if err := json.Unmarshal([]byte(raw.String), &meta); err != nil {
-		return nil, err
-	}
-	return &meta, nil
+	return models.ParsePDFIndexMeta(raw.String)
 }
 
 func (s *SQLiteStore) SavePDFIndexMeta(pdfID string, meta *models.PDFIndexMeta) error {
@@ -69,9 +65,15 @@ func (s *SQLiteStore) ListPDFIndexMeta(pdfIDs []string) (map[string]models.PDFIn
 		if err := rows.Scan(&id, &raw); err != nil {
 			return nil, err
 		}
-		meta := models.PDFIndexMeta{}
+		meta := models.PDFIndexMeta{
+			Glossary:   []models.PDFGlossaryEntry{},
+			Features:   []string{},
+			Cheatsheet: []models.CheatsheetEntry{},
+		}
 		if raw.Valid && raw.String != "" {
-			_ = json.Unmarshal([]byte(raw.String), &meta)
+			if parsed, err := models.ParsePDFIndexMeta(raw.String); err == nil && parsed != nil {
+				meta = *parsed
+			}
 		}
 		out[id] = meta
 	}

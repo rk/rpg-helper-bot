@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -8,24 +9,26 @@ import (
 type IndexPhase string
 
 const (
-	IndexPhaseIdle      IndexPhase = "idle"
-	IndexPhaseThumbnail IndexPhase = "thumbnail"
-	IndexPhaseSections  IndexPhase = "sections"
-	IndexPhaseGlossary  IndexPhase = "glossary"
-	IndexPhaseFinalize  IndexPhase = "finalize"
-	IndexPhaseDone      IndexPhase = "done"
-	IndexPhaseError     IndexPhase = "error"
+	IndexPhaseIdle          IndexPhase = "idle"
+	IndexPhaseThumbnail     IndexPhase = "thumbnail"
+	IndexPhaseSections      IndexPhase = "sections"
+	IndexPhaseGlossaryLLM   IndexPhase = "glossary_llm"
+	IndexPhaseFeaturesLLM   IndexPhase = "features_llm"
+	IndexPhaseCheatsheetLLM IndexPhase = "cheatsheet_llm"
+	IndexPhaseFinalize      IndexPhase = "finalize"
+	IndexPhaseDone          IndexPhase = "done"
+	IndexPhaseError         IndexPhase = "error"
 )
 
 // IndexProgress is a snapshot of indexing work for one PDF.
 type IndexProgress struct {
-	PDFID    string     `json:"pdf_id"`
-	Phase    IndexPhase `json:"phase"`
-	Current  int        `json:"current"`
-	Total    int        `json:"total"`
-	Percent  float64    `json:"percent"`
-	Message  string     `json:"message"`
-	Active   bool       `json:"active"`
+	PDFID   string     `json:"pdf_id"`
+	Phase   IndexPhase `json:"phase"`
+	Current int        `json:"current"`
+	Total   int        `json:"total"`
+	Percent float64    `json:"percent"`
+	Message string     `json:"message"`
+	Active  bool       `json:"active"`
 }
 
 var progressStore sync.Map // pdfID -> IndexProgress
@@ -69,8 +72,8 @@ func progressSection(pdfID string, current, total int, title string) {
 	if total <= 0 {
 		total = 1
 	}
-	// Sections span ~8–82% of the bar.
-	pct := 8 + (float64(current)/float64(total))*74
+	// Sections span ~8–60% of the bar.
+	pct := 8 + (float64(current)/float64(total))*52
 	setProgress(IndexProgress{
 		PDFID: pdfID, Phase: IndexPhaseSections,
 		Current: current, Total: total, Percent: pct,
@@ -78,10 +81,58 @@ func progressSection(pdfID string, current, total int, title string) {
 	})
 }
 
-func progressGlossary(pdfID string) {
+func progressGlossaryLLM(pdfID string, current, total int) {
+	if total <= 0 {
+		total = 1
+	}
+	pct := 60 + (float64(current)/float64(total))*10
 	setProgress(IndexProgress{
-		PDFID: pdfID, Phase: IndexPhaseGlossary,
-		Percent: 88, Message: "Building glossary",
+		PDFID: pdfID, Phase: IndexPhaseGlossaryLLM,
+		Current: current, Total: total, Percent: pct,
+		Message: fmt.Sprintf("Extracting glossary (LLM %d/%d)", current, total),
+	})
+}
+
+func progressFeaturesLLM(pdfID string, current, total int) {
+	if total <= 0 {
+		total = 1
+	}
+	pct := 70 + (float64(current)/float64(total))*8
+	setProgress(IndexProgress{
+		PDFID: pdfID, Phase: IndexPhaseFeaturesLLM,
+		Current: current, Total: total, Percent: pct,
+		Message: fmt.Sprintf("Detecting features (LLM %d/%d)", current, total),
+	})
+}
+
+func progressCheatsheetLLM(pdfID string, current, total int) {
+	if total <= 0 {
+		total = 1
+	}
+	pct := 78 + (float64(current)/float64(total))*17
+	setProgress(IndexProgress{
+		PDFID: pdfID, Phase: IndexPhaseCheatsheetLLM,
+		Current: current, Total: total, Percent: pct,
+		Message: "Building cheatsheet entries (LLM)",
+	})
+}
+
+func beginCheatsheetProgress(pdfID string, total int) {
+	if total <= 0 {
+		total = 1
+	}
+	setProgress(IndexProgress{
+		PDFID: pdfID, Phase: IndexPhaseCheatsheetLLM,
+		Current: 0, Total: total, Percent: 78,
+		Message: "Building cheatsheet entries (LLM)",
+	})
+}
+
+func progressCheatsheetDone(pdfID string, total int) {
+	setProgress(IndexProgress{
+		PDFID: pdfID, Phase: IndexPhaseDone,
+		Current: total, Total: total, Percent: 100,
+		Message: "Cheatsheet rebuild complete", Active: false,
 	})
 }
 

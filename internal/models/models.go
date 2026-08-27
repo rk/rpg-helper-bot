@@ -22,30 +22,28 @@ type Game struct {
 }
 
 type PDFIndexMeta struct {
-	Features           []PDFFeature      `json:"features"`
-	Glossary           []PDFGlossary     `json:"glossary"`
-	Cheatsheet         []CheatsheetEntry `json:"cheatsheet"`
-	LLMGlossarySkipped bool              `json:"llm_glossary_skipped,omitempty"`
+	Glossary            []PDFGlossaryEntry `json:"glossary"`
+	Features            []string           `json:"features"`
+	Cheatsheet          []CheatsheetEntry  `json:"cheatsheet"`
+	LLMLearningsSkipped bool               `json:"llm_learnings_skipped,omitempty"`
 }
 
-type PDFFeature struct {
+type PDFGlossaryEntry struct {
 	FeatureID string   `json:"feature_id"`
-	Sections  []string `json:"sections"`
 	Terms     []string `json:"terms"`
 }
 
-type PDFGlossary struct {
-	FeatureID string `json:"feature_id"`
-	PDFTerm   string `json:"pdf_term"`
-	Evidence  string `json:"evidence,omitempty"`
+type CheatsheetCitation struct {
+	SectionID    string `json:"section_id,omitempty"`
+	SectionTitle string `json:"section_title"`
+	StartPage    int    `json:"start_page"`
+	EndPage      int    `json:"end_page,omitempty"`
 }
 
 type CheatsheetEntry struct {
-	FeatureID   string   `json:"feature_id"`
-	FeatureName string   `json:"feature_name,omitempty"`
-	PDFTerms    []string `json:"pdf_terms"`
-	Section     string   `json:"section"`
-	StartPage   int      `json:"start_page"`
+	FeatureID  string               `json:"feature_id"`
+	Definition string               `json:"definition"`
+	Citations  []CheatsheetCitation `json:"citations"`
 }
 
 type PDF struct {

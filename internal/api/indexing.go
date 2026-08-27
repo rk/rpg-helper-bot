@@ -94,8 +94,8 @@ func decodeChatJSON(r *http.Request, dst any) error {
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 
-func chatGlossaryText(st store.Store, gameID string) string {
-	text, err := search.GlossaryForGame(st, gameID)
+func chatGlossaryText(st store.Store, gameID, userQuery string) string {
+	text, err := search.GlossaryForGame(st, gameID, userQuery)
 	if err != nil {
 		return ""
 	}
@@ -163,7 +163,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	systemPrompt := llm.BuildSystemPrompt(running, hits, chatGlossaryText(s.Store, running.ID))
+	systemPrompt := llm.BuildSystemPrompt(running, hits, chatGlossaryText(s.Store, running.ID, userMsg))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 

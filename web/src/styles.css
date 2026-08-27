@@ -79,9 +79,60 @@ a {
 }
 
 .nav-tabs a.active,
-.nav-tabs a:hover {
+.nav-tabs a:hover,
+.nav-tabs button.active,
+.nav-tabs button:hover {
   color: var(--text);
   background: var(--bg-panel);
+}
+
+.nav-tabs button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  font: inherit;
+}
+
+.detail-tabs {
+  margin-bottom: 1rem;
+}
+
+.cheatsheet-row {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+
+.cheatsheet-row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.cheatsheet-row-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.cheatsheet-row textarea {
+  width: 100%;
+  min-height: 4rem;
+}
+
+.citations-block {
+  margin-top: 0.75rem;
+}
+
+.citations-block h4 {
+  margin: 0;
+  font-size: 0.95rem;
 }
 
 .app-main {
