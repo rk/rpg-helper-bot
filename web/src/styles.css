@@ -395,6 +395,12 @@ input.input-error {
   margin-bottom: 0.65rem;
 }
 
+.toc-extract-panel label select {
+  font: inherit;
+  margin-top: 0.25rem;
+  min-width: 12rem;
+}
+
 .toc-extract-row {
   display: flex;
   flex-wrap: wrap;

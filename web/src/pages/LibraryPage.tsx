@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, PDFSummary, TOCImportSource } from "../api";
+import { BOOKMARK_DEPTH_OPTIONS, DEFAULT_BOOKMARK_MAX_DEPTH } from "../bookmarkDepth";
 import { EmptyState, PathBadge, truncatePath } from "../components/Badges";
 import { useToast } from "../components/Toast";
 
@@ -20,7 +21,7 @@ export default function LibraryPage() {
   const [tocStartPage, setTocStartPage] = useState<number | "">("");
   const [tocEndPage, setTocEndPage] = useState<number | "">("");
   const [tocImportSource, setTocImportSource] = useState<"none" | TOCImportSource>("none");
-  const [includeBookmarkChildren, setIncludeBookmarkChildren] = useState(true);
+  const [bookmarkMaxDepth, setBookmarkMaxDepth] = useState(DEFAULT_BOOKMARK_MAX_DEPTH);
   const navigate = useNavigate();
   const { showError, showInfo } = useToast();
 
@@ -47,7 +48,7 @@ export default function LibraryPage() {
     setTocStartPage("");
     setTocEndPage("");
     setTocImportSource("none");
-    setIncludeBookmarkChildren(true);
+    setBookmarkMaxDepth(DEFAULT_BOOKMARK_MAX_DEPTH);
     setShowForm(false);
   };
 
@@ -56,7 +57,7 @@ export default function LibraryPage() {
       toc_source?: TOCImportSource;
       toc_start_page?: number;
       toc_end_page?: number;
-      toc_include_children?: boolean;
+      toc_bookmark_depth?: number;
     } = {};
 
     if (tocImportSource === "pages") {
@@ -68,7 +69,7 @@ export default function LibraryPage() {
       options.toc_end_page = Number(tocEndPage);
     } else if (tocImportSource === "bookmarks") {
       options.toc_source = "bookmarks";
-      options.toc_include_children = includeBookmarkChildren;
+      options.toc_bookmark_depth = bookmarkMaxDepth;
     }
 
     return options;
@@ -210,13 +211,18 @@ export default function LibraryPage() {
                 From ToC pages
               </label>
               {tocImportSource === "bookmarks" && (
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={includeBookmarkChildren}
-                    onChange={(e) => setIncludeBookmarkChildren(e.target.checked)}
-                  />
-                  Include nested bookmarks
+                <label>
+                  Bookmark depth
+                  <select
+                    value={bookmarkMaxDepth}
+                    onChange={(e) => setBookmarkMaxDepth(Number(e.target.value))}
+                  >
+                    {BOOKMARK_DEPTH_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               )}
               {tocImportSource === "pages" && (

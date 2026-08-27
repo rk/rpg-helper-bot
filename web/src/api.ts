@@ -145,6 +145,8 @@ async function uploadPDF(data: {
   toc_source?: TOCImportSource;
   toc_start_page?: number;
   toc_end_page?: number;
+  toc_bookmark_depth?: number;
+  /** @deprecated use toc_bookmark_depth */
   toc_include_children?: boolean;
 }): Promise<CreatePDFResult> {
   const form = new FormData();
@@ -153,8 +155,8 @@ async function uploadPDF(data: {
   if (data.toc_source) form.append("toc_source", data.toc_source);
   if (data.toc_start_page != null) form.append("toc_start_page", String(data.toc_start_page));
   if (data.toc_end_page != null) form.append("toc_end_page", String(data.toc_end_page));
-  if (data.toc_include_children != null) {
-    form.append("toc_include_children", data.toc_include_children ? "true" : "false");
+  if (data.toc_bookmark_depth != null) {
+    form.append("toc_bookmark_depth", String(data.toc_bookmark_depth));
   }
 
   const res = await fetch("/api/pdfs/upload", { method: "POST", body: form });
@@ -180,6 +182,8 @@ export const api = {
     toc_source?: TOCImportSource;
     toc_start_page?: number;
     toc_end_page?: number;
+    toc_bookmark_depth?: number;
+    /** @deprecated use toc_bookmark_depth */
     toc_include_children?: boolean;
   }) => request<CreatePDFResult>("/api/pdfs", { method: "POST", body: JSON.stringify(data) }),
   uploadPDF,
@@ -194,6 +198,8 @@ export const api = {
     source: TOCImportSource;
     start_page?: number;
     end_page?: number;
+    bookmark_max_depth?: number;
+    /** @deprecated use bookmark_max_depth */
     include_children?: boolean;
   }) =>
     request<ExtractTOCResult>(`/api/pdfs/${id}/toc/extract`, {

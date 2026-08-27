@@ -8,14 +8,16 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
-// BuildPDFLearningsLLM runs the 3-pass LLM learnings pipeline during indexing.
-// Checkpoints glossary and features (and each cheatsheet row) via saveMeta as each step completes.
-func BuildPDFLearningsLLM(ctx context.Context, llmClient *llm.Client, catalog *rpgconcepts.ConceptCatalog, sections []models.TOCSection, pdfID string, saveMeta func(*models.PDFIndexMeta) error) *models.PDFIndexMeta {
+// BuildPDFLearningsLLM runs the 3-pass learnings pipeline during indexing.
+// Glossary and features use LLM word-stats; cheatsheet uses hybrid search + one LLM call per feature.
+// Checkpoints meta via saveMeta as each step completes.
+func BuildPDFLearningsLLM(ctx context.Context, searchSvc *search.Service, llmClient *llm.Client, catalog *rpgconcepts.ConceptCatalog, sections []models.TOCSection, pdfID string, saveMeta func(*models.PDFIndexMeta) error) *models.PDFIndexMeta {
 	meta := models.EmptyPDFIndexMeta()
-	if llmClient == nil || catalog == nil {
+	if llmClient == nil || catalog == nil || searchSvc == nil {
 		meta.LLMLearningsSkipped = true
 		return meta
 	}
@@ -37,16 +39,23 @@ func BuildPDFLearningsLLM(ctx context.Context, llmClient *llm.Client, catalog *r
 		}
 	}
 
-	opts := llm.LearningsOptions{
-		OnProgress: func(phase string, current, total int) {
+	progress := cheatsheetProgress{
+		onProgress: func(phase string, current, total int, featureID string) {
 			switch phase {
 			case "glossary_llm":
 				progressGlossaryLLM(pdfID, current, total)
 			case "features_llm":
 				progressFeaturesLLM(pdfID, current, total)
 			case "cheatsheet_llm":
-				progressCheatsheetLLM(pdfID, current, total)
+				progressCheatsheetLLM(pdfID, current, total, featureID, catalog)
 			}
+		},
+		onCheckpoint: checkpoint,
+	}
+
+	opts := llm.LearningsOptions{
+		OnProgress: func(phase string, current, total int) {
+			progress.onProgress(phase, current, total, "")
 		},
 		OnCheckpoint: checkpoint,
 	}
@@ -55,12 +64,22 @@ func BuildPDFLearningsLLM(ctx context.Context, llmClient *llm.Client, catalog *r
 	if built == nil {
 		built = models.EmptyPDFIndexMeta()
 	}
+	if err != nil {
+		log.Printf("index: LLM glossary/features failed for pdf %s (%d sections): %v", pdfID, len(samples), err)
+		built.LLMLearningsSkipped = true
+		if saveMeta != nil {
+			_ = saveMeta(built)
+		}
+		return built
+	}
+
+	built, err = buildPDFCheatsheet(ctx, searchSvc, llmClient, catalog, pdfID, sections, built, progress)
 	llm.AttachSectionIDs(built.Cheatsheet, sections)
 	models.NormalizeIndexMeta(built)
 	built.LLMLearningsSkipped = err != nil || cheatsheetIncomplete(built)
 
 	if err != nil {
-		log.Printf("index: LLM learnings incomplete for pdf %s (%d sections): %v", pdfID, len(samples), err)
+		log.Printf("index: cheatsheet build incomplete for pdf %s: %v", pdfID, err)
 		if saveMeta != nil {
 			if saveErr := saveMeta(built); saveErr != nil {
 				log.Printf("index: save partial index meta for pdf %s: %v", pdfID, saveErr)
@@ -72,8 +91,8 @@ func BuildPDFLearningsLLM(ctx context.Context, llmClient *llm.Client, catalog *r
 }
 
 // RebuildPDFCheatsheet runs only the cheatsheet pass for features missing cheatsheet rows.
-func RebuildPDFCheatsheet(ctx context.Context, llmClient *llm.Client, st store.Store, catalog *rpgconcepts.ConceptCatalog, sections []models.TOCSection, pdfID string) (*models.PDFIndexMeta, error) {
-	if llmClient == nil || catalog == nil {
+func RebuildPDFCheatsheet(ctx context.Context, searchSvc *search.Service, llmClient *llm.Client, st store.Store, catalog *rpgconcepts.ConceptCatalog, sections []models.TOCSection, pdfID string) (*models.PDFIndexMeta, error) {
+	if llmClient == nil || catalog == nil || searchSvc == nil {
 		return nil, errLLMUnavailable
 	}
 	meta, err := st.GetPDFIndexMeta(pdfID)
@@ -83,13 +102,15 @@ func RebuildPDFCheatsheet(ctx context.Context, llmClient *llm.Client, st store.S
 	if len(meta.Features) == 0 {
 		return meta, errNoFeaturesForCheatsheet
 	}
-
-	samples := llm.BuildSectionSamples(sections)
-	if len(samples) == 0 {
+	if len(llm.BuildSectionSamples(sections)) == 0 {
 		return meta, errNoSectionText
 	}
+	if len(pendingCheatsheetFeatures(meta)) == 0 {
+		meta.LLMLearningsSkipped = false
+		return meta, nil
+	}
 
-	beginCheatsheetProgress(pdfID, len(meta.Features))
+	beginCheatsheetProgress(pdfID, len(meta.Features), catalog)
 
 	saveMeta := func(m *models.PDFIndexMeta) error {
 		return st.SavePDFIndexMeta(pdfID, m)
@@ -103,16 +124,16 @@ func RebuildPDFCheatsheet(ctx context.Context, llmClient *llm.Client, st store.S
 		}
 	}
 
-	opts := llm.LearningsOptions{
-		OnProgress: func(phase string, current, total int) {
+	progress := cheatsheetProgress{
+		onProgress: func(phase string, current, total int, featureID string) {
 			if phase == "cheatsheet_llm" {
-				progressCheatsheetLLM(pdfID, current, total)
+				progressCheatsheetLLM(pdfID, current, total, featureID, catalog)
 			}
 		},
-		OnCheckpoint: checkpoint,
+		onCheckpoint: checkpoint,
 	}
 
-	built, err := llmClient.BuildPDFCheatsheet(ctx, catalog, samples, meta, opts)
+	built, err := buildPDFCheatsheet(ctx, searchSvc, llmClient, catalog, pdfID, sections, meta, progress)
 	if built == nil {
 		built = meta
 	}

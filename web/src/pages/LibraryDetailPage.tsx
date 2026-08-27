@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, PDFSummary, TOCSection, TOCImportSource } from "../api";
+import { DEFAULT_BOOKMARK_MAX_DEPTH } from "../bookmarkDepth";
 import { useIndexing } from "../components/IndexingContext";
 import PDFBaseTab from "../components/PDFBaseTab";
 import PDFLearningsEditor from "../components/PDFLearningsEditor";
@@ -43,7 +44,7 @@ export default function LibraryDetailPage() {
   const [tocStartPage, setTocStartPage] = useState(1);
   const [tocEndPage, setTocEndPage] = useState(3);
   const [tocImportSource, setTocImportSource] = useState<TOCImportSource>("bookmarks");
-  const [includeBookmarkChildren, setIncludeBookmarkChildren] = useState(true);
+  const [bookmarkMaxDepth, setBookmarkMaxDepth] = useState(DEFAULT_BOOKMARK_MAX_DEPTH);
   const [extracting, setExtracting] = useState(false);
 
   useEffect(() => {
@@ -139,7 +140,7 @@ export default function LibraryDetailPage() {
         source: tocImportSource,
         start_page: tocStartPage,
         end_page: tocEndPage,
-        include_children: includeBookmarkChildren,
+        bookmark_max_depth: bookmarkMaxDepth,
       });
       setSections(result.sections.length ? result.sections : [newSection()]);
       if (result.page_count > 0) setPageCount(result.page_count);
@@ -250,8 +251,8 @@ export default function LibraryDetailPage() {
                 setTocEndPage={setTocEndPage}
                 tocImportSource={tocImportSource}
                 setTocImportSource={setTocImportSource}
-                includeBookmarkChildren={includeBookmarkChildren}
-                setIncludeBookmarkChildren={setIncludeBookmarkChildren}
+                bookmarkMaxDepth={bookmarkMaxDepth}
+                setBookmarkMaxDepth={setBookmarkMaxDepth}
                 extracting={extracting}
                 pathMissing={pdf.path_status === "missing"}
                 importSections={importSections}

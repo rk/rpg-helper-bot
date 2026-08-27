@@ -18,7 +18,7 @@ const (
 	finalResultLimit  = 10
 )
 
-type QueryRewriteFunc func(ctx context.Context, query string) (string, error)
+type QueryRewriteFunc func(ctx context.Context, query, glossary string) (string, error)
 
 type Service struct {
 	Store        store.Store
@@ -30,6 +30,17 @@ type Service struct {
 type Result struct {
 	Hits  []models.SearchHit
 	Debug models.ChatSearchDebug
+}
+
+type searchScope struct {
+	pdfIDs    []string
+	pdfOrder  map[string]int
+	pdfTitle  map[string]string
+	metaByPDF map[string]models.PDFIndexMeta
+}
+
+type scopedSearchOpts struct {
+	rewriteQuery bool
 }
 
 func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, error) {
@@ -56,9 +67,76 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		pdfIDs = append(pdfIDs, p.ID)
 	}
 
+	catalog := s.loadConceptCatalog()
+	var metaByPDF map[string]models.PDFIndexMeta
+	if catalog != nil {
+		metaByPDF, err = s.Store.ListPDFIndexMeta(pdfIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	citedSections := map[string]struct{}{}
+	if catalog != nil && metaByPDF != nil {
+		citedSections = CitationSectionIDs(query, metaByPDF, catalog)
+	}
+
+	return s.searchScoped(ctx, query, searchScope{
+		pdfIDs:    pdfIDs,
+		pdfOrder:  pdfOrder,
+		pdfTitle:  pdfTitle,
+		metaByPDF: metaByPDF,
+	}, scopedSearchOpts{rewriteQuery: true}, citedSections)
+}
+
+// SearchPDF runs hybrid FTS+embed search scoped to a single indexed PDF.
+// Query rewrite is skipped; callers should pass a keyword query (e.g. FeatureDefinitionQuery).
+func (s *Service) SearchPDF(ctx context.Context, pdfID, query string, meta *models.PDFIndexMeta) (*Result, error) {
+	query = strings.TrimSpace(query)
+	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
+	if query == "" {
+		return &Result{Debug: debug}, nil
+	}
+
+	pdf, err := s.Store.GetPDF(pdfID)
+	if err != nil {
+		return nil, err
+	}
+
+	metaByPDF := map[string]models.PDFIndexMeta{}
+	if meta != nil {
+		metaByPDF[pdfID] = *meta
+	}
+
+	catalog := s.loadConceptCatalog()
+	citedSections := map[string]struct{}{}
+	if catalog != nil && meta != nil {
+		citedSections = CitationSectionIDs(query, metaByPDF, catalog)
+	}
+
+	return s.searchScoped(ctx, query, searchScope{
+		pdfIDs:    []string{pdfID},
+		pdfOrder:  map[string]int{pdfID: 0},
+		pdfTitle:  map[string]string{pdfID: pdf.Title},
+		metaByPDF: metaByPDF,
+	}, scopedSearchOpts{rewriteQuery: false}, citedSections)
+}
+
+func (s *Service) searchScoped(ctx context.Context, query string, scope searchScope, opts scopedSearchOpts, citedSections map[string]struct{}) (*Result, error) {
+	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
+	if query == "" || len(scope.pdfIDs) == 0 {
+		return &Result{Debug: debug}, nil
+	}
+
+	catalog := s.loadConceptCatalog()
+
 	ftsQuery := query
-	if s.RewriteQuery != nil {
-		rewritten, rewriteErr := s.RewriteQuery(ctx, query)
+	if opts.rewriteQuery && s.RewriteQuery != nil {
+		glossaryBlock := ""
+		if catalog != nil && len(scope.metaByPDF) > 0 {
+			glossaryBlock = FormatGlossaryForSearchRewrite(scope.metaByPDF, scope.pdfTitle, catalog, query)
+		}
+		rewritten, rewriteErr := s.RewriteQuery(ctx, query, glossaryBlock)
 		if rewriteErr != nil {
 			debug.RewriteError = rewriteErr.Error()
 		} else if rewritten = strings.TrimSpace(rewritten); rewritten != "" {
@@ -71,15 +149,8 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 	}
 	debug.FTSQuery = ftsQuery
 
-	catalog := s.loadConceptCatalog()
-	var metaByPDF map[string]models.PDFIndexMeta
-	if catalog != nil {
-		var err error
-		metaByPDF, err = s.Store.ListPDFIndexMeta(pdfIDs)
-		if err != nil {
-			return nil, err
-		}
-		expanded := ExpandFTSWithGlossary(query, ftsQuery, metaByPDF, catalog)
+	if catalog != nil && len(scope.metaByPDF) > 0 {
+		expanded := ExpandFTSWithGlossary(query, ftsQuery, scope.metaByPDF, catalog)
 		if expanded != ftsQuery {
 			debug.QueryRewritten = true
 			ftsQuery = expanded
@@ -87,12 +158,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		}
 	}
 
-	citedSections := map[string]struct{}{}
-	if catalog != nil && metaByPDF != nil {
-		citedSections = CitationSectionIDs(query, metaByPDF, catalog)
-	}
-
-	candidates, err := s.Store.FTSSearch(pdfIDs, ftsQuery, ftsCandidateLimit)
+	candidates, err := s.Store.FTSSearch(scope.pdfIDs, ftsQuery, ftsCandidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -122,11 +188,11 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		h := models.SearchHit{
 			SectionID:    c.SectionID,
 			PDFID:        c.PDFID,
-			PDFTitle:     pdfTitle[c.PDFID],
+			PDFTitle:     scope.pdfTitle[c.PDFID],
 			SectionTitle: c.Title,
 			StartPage:    c.StartPage,
 			EndPage:      c.EndPage,
-			PDFSortOrder: pdfOrder[c.PDFID],
+			PDFSortOrder: scope.pdfOrder[c.PDFID],
 			Score:        score,
 			FTSRank:      c.Rank,
 			Snippet:      snippet,
@@ -141,7 +207,6 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		if scored[i].adjScore != scored[j].adjScore {
 			return scored[i].adjScore > scored[j].adjScore
 		}
-		// Later PDFs (higher sort_order) override on tie/conflict.
 		return scored[i].hit.PDFSortOrder > scored[j].hit.PDFSortOrder
 	})
 
@@ -170,6 +235,35 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 	}
 
 	return &Result{Hits: hits, Debug: debug}, nil
+}
+
+// MergeSearchHits combines hit lists, keeping the first occurrence of each section and truncating to limit.
+func MergeSearchHits(primary, secondary []models.SearchHit, limit int) []models.SearchHit {
+	seen := map[string]struct{}{}
+	var out []models.SearchHit
+	appendHits := func(list []models.SearchHit) {
+		for _, h := range list {
+			if h.SectionID == "" {
+				continue
+			}
+			if _, ok := seen[h.SectionID]; ok {
+				continue
+			}
+			seen[h.SectionID] = struct{}{}
+			out = append(out, h)
+			if limit > 0 && len(out) >= limit {
+				return
+			}
+		}
+	}
+	appendHits(primary)
+	if limit == 0 || len(out) < limit {
+		appendHits(secondary)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func (s *Service) loadConceptCatalog() *rpgconcepts.ConceptCatalog {

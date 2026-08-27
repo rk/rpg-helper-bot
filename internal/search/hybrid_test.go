@@ -94,7 +94,7 @@ func TestHybridSearchUsesRewrittenFTSQuery(t *testing.T) {
 	svc := &search.Service{
 		Store: s,
 		Embed: embed.HashEmbed,
-		RewriteQuery: func(ctx context.Context, query string) (string, error) {
+		RewriteQuery: func(ctx context.Context, query, glossary string) (string, error) {
 			return "necromancer necromancy undead", nil
 		},
 	}

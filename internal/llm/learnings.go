@@ -2,8 +2,8 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	excerptMaxWords     = 1000
-	learningsTimeout    = 120 * time.Second
-	cheatsheetChunkSize = 4
-	llmResponsePreview  = 500
+	excerptMaxWords        = 1000
+	learningsTimeout       = 120 * time.Second
+	cheatsheetSearchHits   = 5
+	cheatsheetExcerptWords = 800
+	llmResponsePreview     = 500
 )
 
 // SectionSample is a section excerpt sent to LLM learnings passes.
@@ -57,7 +58,7 @@ type LearningsOptions struct {
 	OnCheckpoint func(meta *models.PDFIndexMeta)
 }
 
-// BuildPDFLearnings runs the 3-pass chunked LLM indexing pipeline.
+// BuildPDFLearnings runs glossary and features LLM passes (cheatsheet is built separately via search).
 func (c *Client) BuildPDFLearnings(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, sections []SectionSample, opts LearningsOptions) (*models.PDFIndexMeta, error) {
 	if c == nil || catalog == nil {
 		return nil, fmt.Errorf("llm or catalog unavailable")
@@ -91,85 +92,97 @@ func (c *Client) BuildPDFLearnings(ctx context.Context, catalog *rpgconcepts.Con
 	meta.Features = features
 	emitLearningsCheckpoint(meta, opts)
 
-	total := len(features)
-	for i, featureID := range features {
-		if opts.OnProgress != nil {
-			opts.OnProgress("cheatsheet_llm", i, total)
-		}
-		relevant := filterSectionsForFeature(sections, glossary, featureID)
-		entry, err := c.buildCheatsheetEntryChunked(ctx, catalog, glossary, featureID, relevant)
-		if err != nil {
-			emitLearningsCheckpoint(meta, opts)
-			return meta, fmt.Errorf("cheatsheet pass %s: %w", featureID, err)
-		}
-		if entry != nil {
-			meta.Cheatsheet = append(meta.Cheatsheet, *entry)
-		}
-		emitLearningsCheckpoint(meta, opts)
-	}
-	if opts.OnProgress != nil {
-		opts.OnProgress("cheatsheet_llm", total, total)
-	}
-
 	models.NormalizeIndexMeta(meta)
 	return meta, nil
 }
 
-// BuildPDFCheatsheet fills missing cheatsheet rows for features already detected in meta.
-func (c *Client) BuildPDFCheatsheet(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, sections []SectionSample, meta *models.PDFIndexMeta, opts LearningsOptions) (*models.PDFIndexMeta, error) {
+// BuildCheatsheetFromSearchHits synthesizes one cheatsheet entry from search-ranked section excerpts.
+func (c *Client) BuildCheatsheetFromSearchHits(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string, hits []models.SearchHit, sectionText map[string]string) (*models.CheatsheetEntry, error) {
 	if c == nil || catalog == nil {
 		return nil, fmt.Errorf("llm or catalog unavailable")
 	}
-	if meta == nil {
-		return nil, fmt.Errorf("index meta unavailable")
-	}
-	out := *meta
-	if len(out.Features) == 0 {
-		return &out, fmt.Errorf("no features to build cheatsheet for")
+	feat, ok := catalog.FeatureByID(featureID)
+	if !ok {
+		return nil, fmt.Errorf("unknown feature_id %q", featureID)
 	}
 
-	done := map[string]struct{}{}
-	for _, entry := range out.Cheatsheet {
-		if id := strings.TrimSpace(entry.FeatureID); id != "" {
-			done[id] = struct{}{}
+	if len(hits) == 0 {
+		log.Printf("llm learnings: no search hits for feature %q; using catalog description fallback", featureID)
+		def := strings.TrimSpace(feat.Description)
+		if def == "" {
+			return nil, nil
 		}
+		return &models.CheatsheetEntry{
+			FeatureID:  featureID,
+			Definition: def,
+			Citations:  nil,
+		}, nil
 	}
 
-	total := len(out.Features)
-	completed := len(done)
-	var pending []string
-	for _, featureID := range out.Features {
-		if _, ok := done[featureID]; !ok {
-			pending = append(pending, featureID)
-		}
-	}
-	if len(pending) == 0 {
-		models.NormalizeIndexMeta(&out)
-		return &out, nil
+	limit := cheatsheetSearchHits
+	if len(hits) < limit {
+		limit = len(hits)
 	}
 
-	for _, featureID := range pending {
-		if opts.OnProgress != nil {
-			opts.OnProgress("cheatsheet_llm", completed, total)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Build a cheatsheet entry for feature_id=%q.\n", featureID))
+	b.WriteString("Catalog entry:\n")
+	fmt.Fprintf(&b, "- %s (%s): %s; synonyms=%v\n", feat.ID, feat.Name, feat.Description, feat.Synonyms)
+	if len(feat.Questions) > 0 {
+		b.WriteString("\nCatalog questions to address in the definition (when excerpts support an answer):\n")
+		for _, q := range feat.Questions {
+			fmt.Fprintf(&b, "- %s\n", q)
 		}
-		relevant := filterSectionsForFeature(sections, out.Glossary, featureID)
-		entry, err := c.buildCheatsheetEntryChunked(ctx, catalog, out.Glossary, featureID, relevant)
-		if err != nil {
-			emitLearningsCheckpoint(&out, opts)
-			return &out, fmt.Errorf("cheatsheet pass %s: %w", featureID, err)
-		}
-		if entry != nil {
-			out.Cheatsheet = append(out.Cheatsheet, *entry)
-		}
-		completed++
-		emitLearningsCheckpoint(&out, opts)
 	}
-	if opts.OnProgress != nil {
-		opts.OnProgress("cheatsheet_llm", total, total)
+	b.WriteString("\nGlossary terms for this feature:\n")
+	for _, g := range glossary {
+		if g.FeatureID == featureID {
+			fmt.Fprintf(&b, "- %v\n", g.Terms)
+		}
+	}
+	b.WriteString("\nSearch-ranked section excerpts (best matches first):\n")
+	for i, hit := range hits[:limit] {
+		text := sectionText[hit.SectionID]
+		if text == "" {
+			text = hit.Snippet
+		}
+		excerpt := truncateWords(text, cheatsheetExcerptWords)
+		fmt.Fprintf(&b, "\n## [%d] %s [section_id=%s] (pages %d-%d)\n%s\n",
+			i+1, hit.SectionTitle, hit.SectionID, hit.StartPage, hit.EndPage, excerpt)
 	}
 
-	models.NormalizeIndexMeta(&out)
-	return &out, nil
+	ctx, cancel := context.WithTimeout(ctx, learningsTimeout)
+	defer cancel()
+
+	systemPrompt := renderPrompt(PromptCheatsheetExtract, nil)
+	raw, err := c.CompleteJSON(ctx, systemPrompt, b.String())
+	if err != nil {
+		return nil, err
+	}
+	resp, err := parseCheatsheetJSON(raw, llmParseContext{
+		Pass:       "cheatsheet",
+		ChunkNum:   1,
+		ChunkTotal: 1,
+		FeatureID:  featureID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.FeatureID == "" {
+		resp.FeatureID = featureID
+	}
+	if _, ok := catalog.FeatureByID(resp.FeatureID); !ok {
+		return nil, fmt.Errorf("unknown feature_id %q", resp.FeatureID)
+	}
+	resp.Definition = strings.TrimSpace(resp.Definition)
+	if resp.Definition == "" {
+		return nil, nil
+	}
+	return &models.CheatsheetEntry{
+		FeatureID:  resp.FeatureID,
+		Definition: resp.Definition,
+		Citations:  resp.Citations,
+	}, nil
 }
 
 func emitLearningsCheckpoint(meta *models.PDFIndexMeta, opts LearningsOptions) {
@@ -262,115 +275,6 @@ func (c *Client) detectPDFFeaturesFromWordStats(ctx context.Context, catalog *rp
 	return validateFeatures(resp.Features, catalog), nil
 }
 
-func (c *Client) buildCheatsheetEntryChunked(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string, sections []SectionSample) (*models.CheatsheetEntry, error) {
-	chunks := chunkSections(sections, cheatsheetChunkSize)
-	if len(chunks) == 0 {
-		chunks = [][]SectionSample{nil}
-	}
-
-	var draft *models.CheatsheetEntry
-	for i, chunk := range chunks {
-		updated, err := c.buildCheatsheetChunk(ctx, catalog, glossary, featureID, draft, chunk, i+1, len(chunks))
-		if err != nil {
-			return nil, err
-		}
-		if updated == nil {
-			continue
-		}
-		draft = updated
-	}
-	return draft, nil
-}
-
-func (c *Client) buildCheatsheetChunk(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string, draft *models.CheatsheetEntry, chunk []SectionSample, chunkNum, chunkTotal int) (*models.CheatsheetEntry, error) {
-	ctx, cancel := context.WithTimeout(ctx, learningsTimeout)
-	defer cancel()
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Build or refine a cheatsheet entry for feature_id=%q.\n", featureID))
-	b.WriteString(fmt.Sprintf("Processing section chunk %d of %d.\n", chunkNum, chunkTotal))
-	b.WriteString("Catalog entry:\n")
-	if feat, ok := catalog.FeatureByID(featureID); ok {
-		fmt.Fprintf(&b, "- %s (%s): %s; synonyms=%v\n", feat.ID, feat.Name, feat.Description, feat.Synonyms)
-	}
-	b.WriteString("\nGlossary terms for this feature:\n")
-	for _, g := range glossary {
-		if g.FeatureID == featureID {
-			fmt.Fprintf(&b, "- %v\n", g.Terms)
-		}
-	}
-	writeDraftCheatsheet(&b, draft)
-	b.WriteString("\nNew section excerpts in this chunk:\n")
-	for _, sec := range chunk {
-		fmt.Fprintf(&b, "\n## %s [section_id=%s] (pages %d-%d)\n%s\n", sec.Title, sec.SectionID, sec.StartPage, sec.EndPage, sec.Excerpt)
-	}
-
-	systemPrompt := renderPrompt(PromptCheatsheetExtract, nil)
-	raw, err := c.CompleteJSON(ctx, systemPrompt, b.String())
-	if err != nil {
-		return nil, err
-	}
-	var resp *cheatsheetLLMResponse
-	resp, err = parseCheatsheetJSON(raw, llmParseContext{
-		Pass:          "cheatsheet",
-		ChunkNum:      chunkNum,
-		ChunkTotal:    chunkTotal,
-		FeatureID:     featureID,
-		SectionTitles: sectionTitles(chunk),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp.FeatureID == "" {
-		resp.FeatureID = featureID
-	}
-	if _, ok := catalog.FeatureByID(resp.FeatureID); !ok {
-		return nil, fmt.Errorf("unknown feature_id %q", resp.FeatureID)
-	}
-	resp.Definition = strings.TrimSpace(resp.Definition)
-	if resp.Definition == "" && draft == nil {
-		return nil, nil
-	}
-	entry := models.CheatsheetEntry{
-		FeatureID:  resp.FeatureID,
-		Definition: resp.Definition,
-		Citations:  resp.Citations,
-	}
-	if entry.Definition == "" && draft != nil {
-		entry.Definition = draft.Definition
-	}
-	entry.Citations = mergeCitations(draftCitations(draft), entry.Citations)
-	if entry.Definition == "" {
-		return draft, nil
-	}
-	return &entry, nil
-}
-
-func draftCitations(draft *models.CheatsheetEntry) []models.CheatsheetCitation {
-	if draft == nil {
-		return nil
-	}
-	return draft.Citations
-}
-
-func chunkSections(sections []SectionSample, size int) [][]SectionSample {
-	if size <= 0 {
-		size = cheatsheetChunkSize
-	}
-	if len(sections) == 0 {
-		return nil
-	}
-	var chunks [][]SectionSample
-	for i := 0; i < len(sections); i += size {
-		end := i + size
-		if end > len(sections) {
-			end = len(sections)
-		}
-		chunks = append(chunks, sections[i:end])
-	}
-	return chunks
-}
-
 func mergeGlossary(existing, updated []models.PDFGlossaryEntry) []models.PDFGlossaryEntry {
 	byFeature := map[string]map[string]struct{}{}
 	var order []string
@@ -405,48 +309,6 @@ func mergeGlossary(existing, updated []models.PDFGlossaryEntry) []models.PDFGlos
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FeatureID < out[j].FeatureID })
 	return out
-}
-
-func mergeCitations(existing, updated []models.CheatsheetCitation) []models.CheatsheetCitation {
-	seen := map[string]struct{}{}
-	var out []models.CheatsheetCitation
-	for _, list := range [][]models.CheatsheetCitation{existing, updated} {
-		for _, c := range list {
-			key := strings.ToLower(strings.TrimSpace(c.SectionTitle)) + "\x00" + fmt.Sprintf("%d", c.StartPage)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func writeDraftCheatsheet(b *strings.Builder, draft *models.CheatsheetEntry) {
-	if draft == nil {
-		b.WriteString("\nCurrent draft cheatsheet: (empty — first chunk)\n")
-		return
-	}
-	raw, _ := json.Marshal(draft)
-	b.WriteString("\nCurrent draft cheatsheet (refine definition and extend citations):\n")
-	b.Write(raw)
-	b.WriteByte('\n')
-}
-
-func buildSectionChunkMessage(catalog *rpgconcepts.ConceptCatalog, sections []SectionSample, intro string) string {
-	var b strings.Builder
-	b.WriteString("\n\nCanonical feature catalog:\n")
-	for _, f := range catalog.Features {
-		fmt.Fprintf(&b, "- %s (%s): %s; synonyms=%v\n", f.ID, f.Name, f.Description, f.Synonyms)
-	}
-	b.WriteString("\n")
-	b.WriteString(intro)
-	b.WriteString("\n")
-	for _, sec := range sections {
-		fmt.Fprintf(&b, "\n## %s [section_id=%s] (pages %d-%d)\n%s\n", sec.Title, sec.SectionID, sec.StartPage, sec.EndPage, sec.Excerpt)
-	}
-	return b.String()
 }
 
 func BuildSectionSamples(sections []models.TOCSection) []SectionSample {
@@ -485,36 +347,6 @@ func AttachSectionIDs(cheatsheet []models.CheatsheetEntry, sections []models.TOC
 			}
 		}
 	}
-}
-
-func filterSectionsForFeature(sections []SectionSample, glossary []models.PDFGlossaryEntry, featureID string) []SectionSample {
-	var terms []string
-	for _, g := range glossary {
-		if g.FeatureID == featureID {
-			terms = append(terms, g.Terms...)
-		}
-	}
-	if len(terms) == 0 {
-		return sections
-	}
-	var matched []SectionSample
-	for _, sec := range sections {
-		body := sec.PlainText
-		if body == "" {
-			body = sec.Excerpt
-		}
-		hay := strings.ToLower(sec.Title + "\n" + body)
-		for _, term := range terms {
-			if strings.Contains(hay, strings.ToLower(term)) {
-				matched = append(matched, sec)
-				break
-			}
-		}
-	}
-	if len(matched) == 0 {
-		return sections
-	}
-	return matched
 }
 
 func validateGlossary(entries []models.PDFGlossaryEntry, catalog *rpgconcepts.ConceptCatalog) []models.PDFGlossaryEntry {
@@ -572,16 +404,6 @@ func featureLabel(featureID string) string {
 	return fmt.Sprintf(" feature=%q", featureID)
 }
 
-func sectionTitles(chunk []SectionSample) []string {
-	titles := make([]string, 0, len(chunk))
-	for _, sec := range chunk {
-		if t := strings.TrimSpace(sec.Title); t != "" {
-			titles = append(titles, t)
-		}
-	}
-	return titles
-}
-
 func previewLLMText(s string, max int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -600,11 +422,6 @@ func truncateWords(text string, maxWords int) string {
 		return strings.TrimSpace(text)
 	}
 	return strings.Join(words[:maxWords], " ") + "..."
-}
-
-// ChunkSections splits section samples for tests and callers.
-func ChunkSections(sections []SectionSample, size int) [][]SectionSample {
-	return chunkSections(sections, size)
 }
 
 // MergeGlossary combines glossary entries by feature_id.

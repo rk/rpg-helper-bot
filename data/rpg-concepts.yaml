@@ -2,11 +2,22 @@ features:
   - id: skill
     name: Skill
     description: "A Skill represents a character's proficiency in a particular area. Usually referred to as Skill."
+    questions:
+      - "How are skills ranked or leveled?"
+      - "How are skills gained and improved?"
+      - "How many skills does the character start with?"
+      - "Does the character have a limit on how many skills they can have, or a maximum level the skill can achieve?"
     synonyms:
       - skill
   - id: attribute
     name: Attribute
     description: "An Attribute represents a character's inherent traits, such as strength, dexterity, or intelligence."
+    questions:
+      - "What are the character's attributes called?"
+      - "How are attributes used?"
+      - "How are attributes gained?"
+      - "How many attributes does the character start with?"
+      - "Does the character have a limit on how high their attributes can be?"
     synonyms:
       - attribute
       - ability
@@ -14,6 +25,9 @@ features:
   - id: skill_check
     name: Skill Check
     description: "Rolling dice to resolve an action using a skill, trait, or attribute."
+    questions:
+      - "How are skill checks resolved?"
+      - "Assuming dice are used, how are dice used to resolve the skill check?"
     synonyms:
       - test
       - check
@@ -21,6 +35,10 @@ features:
   - id: saving_throw
     name: Saving Throw
     description: "Rolling dice to resist an effect, such as a spell or attack. Some systems use an attribute, a derived stat, or sometimes a skill check. Variance is important to document."
+    questions:
+      - "How do saving throws differ from skill checks?"
+      - "How are saving throws resolved, if different from skill checks?"
+      - "When are saving throws used?"
     synonyms:
       - saving throw
       - saving test
@@ -30,13 +48,22 @@ features:
   - id: attribute_check
     name: Attribute Check
     description: "Rolling dice to resolve an action using an attribute, such as strength, dexterity, or intelligence. Usually identical to skill_check mechanically."
+    questions:
+      - "How do attribute checks differ from skill checks?"
+      - "How are attribute checks resolved, if different from skill checks?"
+      - "When are attribute checks used?"
     synonyms:
       - attribute check
       - attribute test
       - attribute roll
   - id: benny
     name: Benny
-    description: "A meta-currency players (and GMs) spend for rerolls, soak, or other benefits."
+    description: "A meta-currency used during gameplay."
+    questions:
+      - "How are bennies used?"
+      - "How are bennies gained?"
+      - "How many bennies does the character start with?"
+      - "Does the character have a limit on how many bennies they can have?"
     synonyms:
       - benny
       - bennies
@@ -47,6 +74,8 @@ features:
   - id: opposed_roll
     name: Opposed Roll
     description: "Two characters roll against each other; higher success wins."
+    questions:
+      - "How do opposed rolls work?"
     synonyms:
       - opposed roll
       - opposed check
@@ -54,10 +83,27 @@ features:
       - contest
   - id: target_number
     name: Target Number
-    description: "The difficulty or threshold a roll must meet or exceed."
+    description: "The difficulty or threshold a roll must meet or exceed to succeed."
+    questions:
+      - "Is the target number a fixed or dynamic value?"
+      - "Is target number used to model difficulty, or is difficulty applied as modifiers to rolls?"
+      - "How else is target number used?"
     synonyms:
       - target number
       - difficulty
       - tn
       - dc
       - target
+  - id: feat
+    name: Feat
+    description: "A feat is a special ability or bonus granted to a character by a specific rule or set of rules."
+    questions:
+      - "What are feats called?"
+      - "What do feats do?"
+      - "How are feats gained?"
+      - "How are feats used?"
+    synonyms:
+      - feat
+      - edge
+      - stunt
+      - aspect

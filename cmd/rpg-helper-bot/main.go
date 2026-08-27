@@ -54,13 +54,13 @@ func main() {
 
 	llmClient := llm.NewClient()
 
-	indexerSvc := &indexing.Service{Store: sqliteStore, Vectors: vectorStore, DataDir: dataDir, LLM: llmClient}
-
 	searchSvc := &search.Service{
 		Store:        sqliteStore,
 		Embed:        embedFn,
 		RewriteQuery: llmClient.RewriteSearchQuery,
 	}
+
+	indexerSvc := &indexing.Service{Store: sqliteStore, Vectors: vectorStore, DataDir: dataDir, LLM: llmClient, Search: searchSvc}
 
 	server := &api.Server{
 		Store:           sqliteStore,

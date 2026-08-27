@@ -14,7 +14,7 @@ func TestExtractBookmarkSections_swade(t *testing.T) {
 		t.Skip("fixture PDF not present")
 	}
 
-	sections, pageCount, err := indexing.ExtractBookmarkSections(path, true)
+	sections, pageCount, err := indexing.ExtractBookmarkSections(path, indexing.BookmarkDepthUnlimited)
 	if err != nil {
 		t.Fatal(err)
 	}

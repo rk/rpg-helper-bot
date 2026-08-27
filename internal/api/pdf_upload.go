@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/indexing"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
@@ -20,7 +21,7 @@ type pdfImportOptions struct {
 	TOCSource          string
 	TOCStartPage       int
 	TOCEndPage         int
-	TOCIncludeChildren bool
+	TOCBookmarkMaxDepth int
 }
 
 func (s *Server) handleUploadPDF(w http.ResponseWriter, r *http.Request) {
@@ -93,10 +94,10 @@ func (s *Server) handleUploadPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := pdfImportOptions{
-		TOCSource:          strings.TrimSpace(strings.ToLower(r.FormValue("toc_source"))),
-		TOCStartPage:       formInt(r, "toc_start_page"),
-		TOCEndPage:         formInt(r, "toc_end_page"),
-		TOCIncludeChildren: formBoolDefault(r, "toc_include_children", true),
+		TOCSource:           strings.TrimSpace(strings.ToLower(r.FormValue("toc_source"))),
+		TOCStartPage:        formInt(r, "toc_start_page"),
+		TOCEndPage:          formInt(r, "toc_end_page"),
+		TOCBookmarkMaxDepth: formBookmarkMaxDepth(r),
 	}
 	s.respondCreatePDF(w, p, opts)
 }
@@ -113,7 +114,7 @@ func (s *Server) respondCreatePDF(w http.ResponseWriter, p *models.PDF, opts pdf
 		if store.ProbePath(p.FilePath) != models.PathStatusOK {
 			tocErr = errPDFPathMissing()
 		} else {
-			_, tocErr = s.applyImportedTOC(p.ID, p.FilePath, tocSource, opts.TOCStartPage, opts.TOCEndPage, opts.TOCIncludeChildren)
+			_, tocErr = s.applyImportedTOC(p.ID, p.FilePath, tocSource, opts.TOCStartPage, opts.TOCEndPage, opts.TOCBookmarkMaxDepth)
 		}
 	}
 
@@ -162,6 +163,20 @@ func titleFromFilename(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimSuffix(base, filepath.Ext(base)))
+}
+
+func formBookmarkMaxDepth(r *http.Request) int {
+	if raw := strings.TrimSpace(r.FormValue("toc_bookmark_depth")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			return indexing.ResolveBookmarkMaxDepth(&v, nil)
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("toc_include_children")); raw != "" {
+		includeChildren, _ := strconv.ParseBool(raw)
+		return indexing.ResolveBookmarkMaxDepth(nil, &includeChildren)
+	}
+	const defaultDepth = 2
+	return defaultDepth
 }
 
 func formInt(r *http.Request, key string) int {

@@ -40,14 +40,18 @@ var defaultPromptEnv = map[PromptID]string{
 var embeddedDefaults = map[PromptID]string{
 	PromptChatSystem: `{{RPG_DOMAIN}}
 
-You are a helpful tabletop RPG rules assistant. Answer using ONLY the provided rule excerpts.
+You are a helpful tabletop RPG rules assistant. Answer using ONLY the provided rule excerpts and indexed learnings below.
 If the answer is not in the excerpts, say you could not find it in the indexed rules.
 Format answers in Markdown. Cite excerpts inline as [1], [2], etc. matching the excerpt numbers below.
 Preserve dice notation exactly (e.g. 2D6, d8, 2D6-2, 2D) — do not rewrite or expand dice expressions.
 
 {{GLOSSARY}}
 
+{{CHEATSHEET}}
+
 {{GAME_NOTES}}
+
+When cheatsheet entries are provided, treat them as indexed summaries and prefer their cited sections in the rule excerpts below.
 
 Rule excerpts (later books override earlier ones on conflict):
 {{EXCERPTS}}
@@ -56,9 +60,11 @@ Rule excerpts (later books override earlier ones on conflict):
 
 You rewrite tabletop RPG rules questions into concise keyword lists for full-text search.
 Include the original important terms plus closely related words, synonyms, and word stems.
+When book terminology is provided below, include PDF-specific glossary terms as keywords when they relate to the question.
 Preserve dice notation tokens exactly (e.g. 2D6, d8, 2D6-2, 2D) — do not expand or normalize them.
 Reply with ONLY space-separated keywords. No punctuation, labels, or explanation. At most 12 words.
-`,
+
+{{GLOSSARY}}`,
 	PromptGlossaryExtract: `{{RPG_DOMAIN}}
 
 {{JSON_OUTPUT}}
@@ -79,9 +85,9 @@ Use feature_id values from the catalog only.`,
 
 {{JSON_OUTPUT}}
 
-You write concise rules cheatsheet entries for one RPG feature from rulebook excerpts.
-You receive a draft entry from prior chunks and new section excerpts. Refine and return the full updated entry.
-Reply with this JSON shape: {"feature_id":"...","definition":"...","citations":[{"section_title":"...","start_page":1}]}`,
+You write concise rules cheatsheet entries for one RPG feature from search-ranked rulebook excerpts.
+You receive catalog entry, optional catalog questions to answer, glossary terms, and ranked section excerpts. Summarize in one response; address catalog questions when excerpts support them.
+Reply with this JSON shape: {"feature_id":"...","definition":"...","citations":[{"section_title":"...","section_id":"...","start_page":1}]}`,
 	PromptJSONOutput: `## Output format
 
 Your entire reply must be one raw JSON value with no surrounding text.
@@ -144,7 +150,7 @@ func renderPrompt(id PromptID, vars map[string]string) string {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
 	}
 	// Remove unused placeholders.
-	for _, key := range []string{"RPG_DOMAIN", "JSON_OUTPUT", "GLOSSARY", "GAME_NOTES", "EXCERPTS"} {
+	for _, key := range []string{"RPG_DOMAIN", "JSON_OUTPUT", "GLOSSARY", "CHEATSHEET", "GAME_NOTES", "EXCERPTS"} {
 		out = strings.ReplaceAll(out, "{{"+key+"}}", "")
 	}
 	return strings.TrimSpace(out) + "\n"

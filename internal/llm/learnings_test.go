@@ -1,12 +1,35 @@
 package llm_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 )
+
+func TestBuildCheatsheetFromSearchHits_catalogFallback(t *testing.T) {
+	catalog := &rpgconcepts.ConceptCatalog{
+		Features: []rpgconcepts.Feature{{
+			ID:          "attribute",
+			Name:        "Attribute",
+			Description: "An Attribute represents inherent traits.",
+		}},
+	}
+	c := &llm.Client{}
+	entry, err := c.BuildCheatsheetFromSearchHits(context.Background(), catalog, nil, "attribute", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry == nil || entry.Definition == "" {
+		t.Fatalf("expected catalog fallback entry, got %+v", entry)
+	}
+	if entry.FeatureID != "attribute" {
+		t.Fatalf("unexpected feature_id: %q", entry.FeatureID)
+	}
+}
 
 func TestBuildSectionSamples_truncates(t *testing.T) {
 	long := strings.Repeat("word ", 2000)
@@ -33,17 +56,6 @@ func TestAttachSectionIDs(t *testing.T) {
 	llm.AttachSectionIDs(cheatsheet, sections)
 	if cheatsheet[0].Citations[0].SectionID != "sec-1" {
 		t.Fatalf("section id not attached: %+v", cheatsheet[0].Citations[0])
-	}
-}
-
-func TestChunkSections(t *testing.T) {
-	samples := make([]llm.SectionSample, 13)
-	chunks := llm.ChunkSections(samples, 6)
-	if len(chunks) != 3 {
-		t.Fatalf("expected 3 chunks, got %d", len(chunks))
-	}
-	if len(chunks[0]) != 6 || len(chunks[1]) != 6 || len(chunks[2]) != 1 {
-		t.Fatalf("unexpected chunk sizes: %d, %d, %d", len(chunks[0]), len(chunks[1]), len(chunks[2]))
 	}
 }
 

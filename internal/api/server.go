@@ -156,10 +156,11 @@ func (s *Server) handleListPDFs(w http.ResponseWriter, r *http.Request) {
 type createPDFRequest struct {
 	Title             string `json:"title"`
 	FilePath          string `json:"file_path"`
-	TOCSource         string `json:"toc_source,omitempty"` // "pages" or "bookmarks"
-	TOCStartPage      *int   `json:"toc_start_page,omitempty"`
-	TOCEndPage        *int   `json:"toc_end_page,omitempty"`
-	TOCIncludeChildren *bool `json:"toc_include_children,omitempty"`
+	TOCSource          string `json:"toc_source,omitempty"` // "pages" or "bookmarks"
+	TOCStartPage       *int   `json:"toc_start_page,omitempty"`
+	TOCEndPage         *int   `json:"toc_end_page,omitempty"`
+	TOCIncludeChildren *bool  `json:"toc_include_children,omitempty"` // legacy
+	TOCBookmarkMaxDepth *int  `json:"toc_bookmark_depth,omitempty"`
 }
 
 type createPDFResponse struct {
@@ -179,9 +180,11 @@ func (s *Server) handleCreatePDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	includeChildren := true
-	if req.TOCIncludeChildren != nil {
-		includeChildren = *req.TOCIncludeChildren
+	maxDepth := 2
+	if req.TOCBookmarkMaxDepth != nil {
+		maxDepth = indexing.ResolveBookmarkMaxDepth(req.TOCBookmarkMaxDepth, nil)
+	} else if req.TOCIncludeChildren != nil {
+		maxDepth = indexing.ResolveBookmarkMaxDepth(nil, req.TOCIncludeChildren)
 	}
 	start, end := 0, 0
 	if req.TOCStartPage != nil {
@@ -191,10 +194,10 @@ func (s *Server) handleCreatePDF(w http.ResponseWriter, r *http.Request) {
 		end = *req.TOCEndPage
 	}
 	s.respondCreatePDF(w, p, pdfImportOptions{
-		TOCSource:          req.TOCSource,
-		TOCStartPage:      start,
-		TOCEndPage:        end,
-		TOCIncludeChildren: includeChildren,
+		TOCSource:           req.TOCSource,
+		TOCStartPage:        start,
+		TOCEndPage:          end,
+		TOCBookmarkMaxDepth: maxDepth,
 	})
 }
 

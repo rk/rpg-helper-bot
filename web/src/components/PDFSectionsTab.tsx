@@ -1,5 +1,6 @@
 import { EmptyState } from "./Badges";
 import { TOCSection, TOCImportSource } from "../api";
+import { BOOKMARK_DEPTH_OPTIONS } from "../bookmarkDepth";
 
 type Props = {
   sections: TOCSection[];
@@ -10,8 +11,8 @@ type Props = {
   setTocEndPage: (v: number) => void;
   tocImportSource: TOCImportSource;
   setTocImportSource: (v: TOCImportSource) => void;
-  includeBookmarkChildren: boolean;
-  setIncludeBookmarkChildren: (v: boolean) => void;
+  bookmarkMaxDepth: number;
+  setBookmarkMaxDepth: (v: number) => void;
   extracting: boolean;
   pathMissing: boolean;
   importSections: () => void;
@@ -31,8 +32,8 @@ export default function PDFSectionsTab({
   setTocEndPage,
   tocImportSource,
   setTocImportSource,
-  includeBookmarkChildren,
-  setIncludeBookmarkChildren,
+  bookmarkMaxDepth,
+  setBookmarkMaxDepth,
   extracting,
   pathMissing,
   importSections,
@@ -77,13 +78,18 @@ export default function PDFSectionsTab({
           </label>
         </div>
         {tocImportSource === "bookmarks" ? (
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={includeBookmarkChildren}
-              onChange={(e) => setIncludeBookmarkChildren(e.target.checked)}
-            />
-            Include nested bookmarks
+          <label>
+            Bookmark depth
+            <select
+              value={bookmarkMaxDepth}
+              onChange={(e) => setBookmarkMaxDepth(Number(e.target.value))}
+            >
+              {BOOKMARK_DEPTH_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </label>
         ) : (
           <div className="toc-extract-row">

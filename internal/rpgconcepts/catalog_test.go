@@ -22,6 +22,10 @@ func TestLoadConcepts(t *testing.T) {
 	if !ok || f.Name == "" {
 		t.Fatal("skill_check feature missing")
 	}
+	skill, ok := c.FeatureByID("skill")
+	if !ok || len(skill.Questions) == 0 {
+		t.Fatal("skill feature questions missing")
+	}
 }
 
 func TestMatchQueryFeatures(t *testing.T) {

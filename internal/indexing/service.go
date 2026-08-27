@@ -10,6 +10,7 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/vectors"
 )
@@ -17,10 +18,11 @@ import (
 const thumbnailMaxPx = 200
 
 type Service struct {
-	Store   store.Store
-	Vectors *vectors.Store
-	DataDir string
-	LLM     *llm.Client
+	Store        store.Store
+	Vectors      *vectors.Store
+	DataDir      string
+	LLM          *llm.Client
+	Search       *search.Service
 	ConceptsPath string
 }
 
@@ -111,7 +113,7 @@ func (s *Service) IndexPDF(ctx context.Context, pdfID string) (*Result, error) {
 		saveMeta := func(m *models.PDFIndexMeta) error {
 			return s.Store.SavePDFIndexMeta(pdfID, m)
 		}
-		meta := BuildPDFLearningsLLM(ctx, s.LLM, catalog, sections, pdfID, saveMeta)
+		meta := BuildPDFLearningsLLM(ctx, s.Search, s.LLM, catalog, sections, pdfID, saveMeta)
 		if err := s.Store.SavePDFIndexMeta(pdfID, meta); err != nil {
 			return nil, fmt.Errorf("save index meta: %w", err)
 		}
@@ -210,7 +212,7 @@ func (s *Service) RebuildCheatsheet(ctx context.Context, pdfID string) (*models.
 		return nil, fmt.Errorf("concepts: %w", err)
 	}
 
-	return RebuildPDFCheatsheet(ctx, s.LLM, s.Store, catalog, sections, pdfID)
+	return RebuildPDFCheatsheet(ctx, s.Search, s.LLM, s.Store, catalog, sections, pdfID)
 }
 
 func pageRangeKey(key pageRange) string {

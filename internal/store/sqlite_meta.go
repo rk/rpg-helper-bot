@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 )
@@ -31,7 +32,7 @@ func (s *SQLiteStore) SavePDFIndexMeta(pdfID string, meta *models.PDFIndexMeta) 
 	if err != nil {
 		return err
 	}
-	res, err := s.db.Exec(`UPDATE pdfs SET index_meta = ?, updated_at = datetime('now') WHERE id = ?`, string(b), pdfID)
+	res, err := s.db.Exec(`UPDATE pdfs SET index_meta = ?, updated_at = ? WHERE id = ?`, string(b), formatTime(time.Now().UTC()), pdfID)
 	if err != nil {
 		return err
 	}

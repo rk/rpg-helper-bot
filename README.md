@@ -56,7 +56,7 @@ Chat and embedding providers are configured independently (`llama.cpp`, `ollama`
 
 ## RPG concept cheatsheet
 
-[`data/rpg-concepts.yaml`](data/rpg-concepts.yaml) defines canonical RPG features and synonym families (skill check, rate of fire, wild die, etc.). Extend this file as you encounter new cross-book terminology patterns.
+[`data/rpg-concepts.yaml`](data/rpg-concepts.yaml) defines canonical RPG features, synonym families, and optional **questions** the cheatsheet pass should try to answer (skill check, rate of fire, wild die, etc.). Extend this file as you encounter new cross-book terminology patterns.
 
 During PDF indexing, the app runs a **3-pass LLM pipeline** (when the chat LLM is configured):
 
@@ -72,7 +72,7 @@ Results are stored in `pdfs.index_meta` (SQLite) as:
 
 If the LLM is unavailable, learnings are empty and `llm_learnings_skipped` is set.
 
-Glossary and feature detection each use a single LLM call over the top **1000** word-frequency tokens. Cheatsheet uses chunked section excerpts (up to **1000 words** each). Each LLM call has a **120s** timeout.
+Glossary and feature detection each use a single LLM call over the top **1000** word-frequency tokens. Cheatsheet uses **hybrid search** (FTS + embedding rerank) to find the best sections per feature, then **one LLM call per feature** to summarize. Each LLM call has a **120s** timeout.
 
 **Re-index PDFs** after deploying schema or prompt changes to regenerate learnings.
 
@@ -84,7 +84,7 @@ Override the concepts file path with `RPG_HELPER_CONCEPTS_FILE`.
 |-------|------------|
 | Embedding similarity (rerank) | Original user question only |
 | Title boost / table penalty | Original user question only |
-| FTS keyword retrieval | Original + LLM rewrite + glossary PDF terms + preserved dice tokens |
+| FTS keyword retrieval | Original + LLM rewrite (with glossary context) + post-rewrite glossary expansion + preserved dice tokens |
 | Snippet highlighting | Original user question |
 
 Dice notation (`2D6`, `d8`, `2D6-2`, dice-pool `2D`) is preserved in FTS queries and passed to LLMs without normalization.
@@ -97,10 +97,10 @@ All chat-model system prompts are customizable. Defaults live in [`prompts/`](pr
 |--------|--------------|--------------|-----------|
 | RPG domain (shared) | `prompts/shared/rpg-domain.md` | `RPG_HELPER_PROMPT_RPG_DOMAIN` | Prepended to all prompts below |
 | Chat / rules Q&A | `prompts/chat-system.md` | `RPG_HELPER_PROMPT_CHAT` | `/api/chat` streaming answers |
-| Search rewrite | `prompts/search-rewrite-system.md` | `RPG_HELPER_PROMPT_SEARCH_REWRITE` | FTS keyword expansion before search |
+| Search rewrite | `prompts/search-rewrite-system.md` | `RPG_HELPER_PROMPT_SEARCH_REWRITE` | FTS keyword expansion; receives indexed glossary terms for PDF-specific synonyms |
 | Glossary extract | `prompts/glossary-extract-system.md` | `RPG_HELPER_PROMPT_GLOSSARY` | Index pass 1: book terminology |
 | Feature detect | `prompts/feature-detect-system.md` | `RPG_HELPER_PROMPT_FEATURE_DETECT` | Index pass 2: feature presence |
-| Cheatsheet extract | `prompts/cheatsheet-extract-system.md` | `RPG_HELPER_PROMPT_CHEATSHEET` | Index pass 3: definitions + citations |
+| Cheatsheet extract | `prompts/cheatsheet-extract-system.md` | `RPG_HELPER_PROMPT_CHEATSHEET` | Index pass 3: search-ranked sections + one LLM summarize per feature |
 
 Set `RPG_HELPER_PROMPTS_DIR` to use an alternate prompts directory. Individual env vars override specific files. Embedded defaults apply if files are missing.
 

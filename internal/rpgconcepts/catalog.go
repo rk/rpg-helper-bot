@@ -14,6 +14,7 @@ type Feature struct {
 	ID          string   `yaml:"id"`
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
+	Questions   []string `yaml:"questions"`
 	Synonyms    []string `yaml:"synonyms"`
 }
 
@@ -59,8 +60,18 @@ func LoadConcepts(path string) (*ConceptCatalog, error) {
 }
 
 func (c *ConceptCatalog) FeatureByID(id string) (Feature, bool) {
-	f, ok := c.byID[id]
-	return f, ok
+	if c == nil {
+		return Feature{}, false
+	}
+	if f, ok := c.byID[id]; ok {
+		return f, true
+	}
+	for _, f := range c.Features {
+		if f.ID == id {
+			return f, true
+		}
+	}
+	return Feature{}, false
 }
 
 func (c *ConceptCatalog) AllSynonyms() []string {

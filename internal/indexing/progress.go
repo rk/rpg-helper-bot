@@ -2,7 +2,10 @@ package indexing
 
 import (
 	"fmt"
+	"strings"
 	"sync"
+
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 )
 
 // IndexPhase identifies the current indexing stage.
@@ -105,26 +108,59 @@ func progressFeaturesLLM(pdfID string, current, total int) {
 	})
 }
 
-func progressCheatsheetLLM(pdfID string, current, total int) {
+func progressCheatsheetLLM(pdfID string, current, total int, featureID string, catalog *rpgconcepts.ConceptCatalog) {
 	if total <= 0 {
 		total = 1
 	}
+	if current < 0 {
+		current = 0
+	}
+	if current > total {
+		current = total
+	}
 	pct := 78 + (float64(current)/float64(total))*17
+	msg := cheatsheetProgressMessage(current, total, featureID, catalog)
 	setProgress(IndexProgress{
 		PDFID: pdfID, Phase: IndexPhaseCheatsheetLLM,
 		Current: current, Total: total, Percent: pct,
-		Message: "Building cheatsheet entries (LLM)",
+		Message: msg,
 	})
 }
 
-func beginCheatsheetProgress(pdfID string, total int) {
+func cheatsheetProgressMessage(current, total int, featureID string, catalog *rpgconcepts.ConceptCatalog) string {
+	if featureID == "" {
+		if current >= total && total > 0 {
+			return fmt.Sprintf("Cheatsheet complete (%d/%d)", total, total)
+		}
+		return fmt.Sprintf("Building cheatsheet entries (%d/%d)", current, total)
+	}
+	label := featureProgressLabel(catalog, featureID)
+	return fmt.Sprintf("Building cheatsheet: %s (%d/%d)", label, current, total)
+}
+
+func featureProgressLabel(catalog *rpgconcepts.ConceptCatalog, featureID string) string {
+	featureID = strings.TrimSpace(featureID)
+	if featureID == "" {
+		return "feature"
+	}
+	if catalog != nil {
+		if feat, ok := catalog.FeatureByID(featureID); ok {
+			if name := strings.TrimSpace(feat.Name); name != "" {
+				return name
+			}
+		}
+	}
+	return featureID
+}
+
+func beginCheatsheetProgress(pdfID string, total int, catalog *rpgconcepts.ConceptCatalog) {
 	if total <= 0 {
 		total = 1
 	}
 	setProgress(IndexProgress{
 		PDFID: pdfID, Phase: IndexPhaseCheatsheetLLM,
 		Current: 0, Total: total, Percent: 78,
-		Message: "Building cheatsheet entries (LLM)",
+		Message: cheatsheetProgressMessage(0, total, "", catalog),
 	})
 }
 

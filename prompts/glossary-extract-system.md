@@ -16,8 +16,8 @@ Reply with this JSON shape:
 }
 
 Rules:
-- Pick terms evidenced by the word-frequency dictionary and catalog synonyms.
-- terms use this book's natural casing (e.g. "Tests", not "TESTS") when you can infer it from catalog context.
+- Pick terms best matching the concept (as described) by the word-frequency dictionary and catalog synonyms.
+- Terms use this book's natural casing (e.g. "Tests", not "TESTS") when you can infer it from catalog context.
 - Use feature_id values from the provided catalog only.
 - Group all book terms for a feature into one glossary entry.
 - Omit uncertain mappings rather than guessing.

@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
@@ -9,14 +10,29 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
+// ChatLearnings holds formatted glossary and cheatsheet blocks for chat prompts.
+type ChatLearnings struct {
+	Glossary   string
+	Cheatsheet string
+}
+
 // GlossaryForGame loads formatted glossary and cheatsheet text for all PDFs in a game.
 func GlossaryForGame(st store.Store, gameID string, userQuery string) (string, error) {
-	pdfs, err := st.ListGamePDFs(gameID)
+	learnings, err := LearningsForChat(st, gameID, userQuery)
 	if err != nil {
 		return "", err
 	}
+	return combineChatLearnings(learnings.Glossary, learnings.Cheatsheet), nil
+}
+
+// LearningsForChat loads glossary and cheatsheet blocks separately for chat prompts.
+func LearningsForChat(st store.Store, gameID, userQuery string) (ChatLearnings, error) {
+	pdfs, err := st.ListGamePDFs(gameID)
+	if err != nil {
+		return ChatLearnings{}, err
+	}
 	if len(pdfs) == 0 {
-		return "", nil
+		return ChatLearnings{}, nil
 	}
 	ids := make([]string, len(pdfs))
 	titles := map[string]string{}
@@ -26,10 +42,16 @@ func GlossaryForGame(st store.Store, gameID string, userQuery string) (string, e
 	}
 	meta, err := st.ListPDFIndexMeta(ids)
 	if err != nil {
-		return "", err
+		return ChatLearnings{}, err
 	}
 	catalog := loadConceptCatalogFromEnv()
-	return FormatLearningsForPrompt(meta, titles, catalog, userQuery), nil
+	return FormatChatLearnings(meta, titles, catalog, userQuery), nil
+}
+
+// FormatChatLearnings renders glossary and cheatsheet blocks from index meta.
+func FormatChatLearnings(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, userQuery string) ChatLearnings {
+	glossary, cheatsheet := formatChatLearnings(metaByPDF, pdfTitles, catalog, userQuery)
+	return ChatLearnings{Glossary: glossary, Cheatsheet: cheatsheet}
 }
 
 func ExpandFTSWithGlossary(originalQuery, ftsQuery string, metaByPDF map[string]models.PDFIndexMeta, catalog *rpgconcepts.ConceptCatalog) string {
@@ -97,15 +119,34 @@ func matchedFeatureIDs(query string, metaByPDF map[string]models.PDFIndexMeta, c
 
 // FormatLearningsForPrompt renders glossary mappings and matching cheatsheet entries for chat context.
 func FormatLearningsForPrompt(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, userQuery string) string {
-	if len(metaByPDF) == 0 {
+	glossary, cheatsheet := formatChatLearnings(metaByPDF, pdfTitles, catalog, userQuery)
+	return combineChatLearnings(glossary, cheatsheet)
+}
+
+func combineChatLearnings(glossary, cheatsheet string) string {
+	glossary = strings.TrimSpace(glossary)
+	cheatsheet = strings.TrimSpace(cheatsheet)
+	if glossary == "" && cheatsheet == "" {
 		return ""
 	}
-	matched := map[string]struct{}{}
-	if catalog != nil && userQuery != "" {
-		for _, id := range matchedFeatureIDs(userQuery, metaByPDF, catalog) {
-			matched[id] = struct{}{}
-		}
+	var out strings.Builder
+	if glossary != "" {
+		out.WriteString(glossary)
 	}
+	if cheatsheet != "" {
+		if glossary != "" {
+			out.WriteByte('\n')
+		}
+		out.WriteString(cheatsheet)
+	}
+	return out.String()
+}
+
+func formatChatLearnings(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, userQuery string) (glossaryBlock, cheatsheetBlock string) {
+	if len(metaByPDF) == 0 {
+		return "", ""
+	}
+	matched := matchedFeaturesForQuery(userQuery, metaByPDF, catalog)
 
 	var b strings.Builder
 	glossaryLines := 0
@@ -122,6 +163,9 @@ func FormatLearningsForPrompt(metaByPDF map[string]models.PDFIndexMeta, pdfTitle
 			glossaryLines++
 		}
 	}
+	if glossaryLines > 0 {
+		glossaryBlock = "Book terminology (this game's indexed PDFs):\n" + b.String()
+	}
 
 	cheatsheetLines := 0
 	var cs strings.Builder
@@ -131,54 +175,127 @@ func FormatLearningsForPrompt(metaByPDF map[string]models.PDFIndexMeta, pdfTitle
 			title = pdfID
 		}
 		for _, c := range meta.Cheatsheet {
-			if len(matched) > 0 {
-				if _, ok := matched[c.FeatureID]; !ok {
-					continue
-				}
+			if !cheatsheetEntryMatches(c, matched) {
+				continue
 			}
 			if c.Definition == "" {
 				continue
 			}
-			name := c.FeatureID
-			if catalog != nil {
-				if feat, ok := catalog.FeatureByID(c.FeatureID); ok {
-					name = feat.Name
-				}
-			}
-			fmt.Fprintf(&cs, "- %s / %s: %s\n", title, name, c.Definition)
+			name := featureDisplayName(catalog, c.FeatureID)
+			fmt.Fprintf(&cs, "- %s / %s (%s): %s\n", title, name, c.FeatureID, c.Definition)
 			for i, cit := range c.Citations {
-				if cit.EndPage > 0 && cit.EndPage != cit.StartPage {
-					fmt.Fprintf(&cs, "  [%d] %s (pages %d-%d)\n", i+1, cit.SectionTitle, cit.StartPage, cit.EndPage)
-				} else {
-					fmt.Fprintf(&cs, "  [%d] %s (page %d)\n", i+1, cit.SectionTitle, cit.StartPage)
-				}
+				writeCheatsheetCitationLine(&cs, i+1, cit)
 			}
 			cheatsheetLines++
 		}
 	}
-
-	if glossaryLines == 0 && cheatsheetLines == 0 {
-		return ""
-	}
-
-	var out strings.Builder
-	if glossaryLines > 0 {
-		out.WriteString("Book terminology (this game's indexed PDFs):\n")
-		out.WriteString(b.String())
-	}
 	if cheatsheetLines > 0 {
-		if glossaryLines > 0 {
-			out.WriteByte('\n')
+		header := "Cheatsheet (matching user question)"
+		if len(matched) == 0 {
+			header = "Cheatsheet (indexed features)"
 		}
-		out.WriteString("Cheatsheet (matching user question):\n")
-		out.WriteString(cs.String())
+		cheatsheetBlock = header + ":\n" + cs.String()
 	}
-	return out.String()
+	return glossaryBlock, cheatsheetBlock
+}
+
+func matchedFeaturesForQuery(userQuery string, metaByPDF map[string]models.PDFIndexMeta, catalog *rpgconcepts.ConceptCatalog) map[string]struct{} {
+	matched := map[string]struct{}{}
+	if catalog != nil && strings.TrimSpace(userQuery) != "" {
+		for _, id := range matchedFeatureIDs(userQuery, metaByPDF, catalog) {
+			matched[id] = struct{}{}
+		}
+	}
+	return matched
+}
+
+func cheatsheetEntryMatches(entry models.CheatsheetEntry, matched map[string]struct{}) bool {
+	if len(matched) == 0 {
+		return true
+	}
+	_, ok := matched[entry.FeatureID]
+	return ok
+}
+
+func featureDisplayName(catalog *rpgconcepts.ConceptCatalog, featureID string) string {
+	if catalog != nil {
+		if feat, ok := catalog.FeatureByID(featureID); ok {
+			if name := strings.TrimSpace(feat.Name); name != "" {
+				return name
+			}
+		}
+	}
+	return featureID
+}
+
+func writeCheatsheetCitationLine(b *strings.Builder, index int, cit models.CheatsheetCitation) {
+	pageSuffix := fmt.Sprintf("(page %d)", cit.StartPage)
+	if cit.EndPage > 0 && cit.EndPage != cit.StartPage {
+		pageSuffix = fmt.Sprintf("(pages %d-%d)", cit.StartPage, cit.EndPage)
+	}
+	if cit.SectionID != "" {
+		fmt.Fprintf(b, "  [%d] %s [section_id=%s] %s\n", index, cit.SectionTitle, cit.SectionID, pageSuffix)
+		return
+	}
+	fmt.Fprintf(b, "  [%d] %s %s\n", index, cit.SectionTitle, pageSuffix)
 }
 
 // FormatGlossaryForPrompt renders per-PDF glossary mappings for chat context.
 func FormatGlossaryForPrompt(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string) string {
 	return FormatLearningsForPrompt(metaByPDF, pdfTitles, nil, "")
+}
+
+// FormatGlossaryForSearchRewrite renders indexed glossary mappings for the search rewrite LLM.
+// When the query matches catalog or glossary features, only those mappings are included; otherwise all are shown.
+func FormatGlossaryForSearchRewrite(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, query string) string {
+	if len(metaByPDF) == 0 {
+		return ""
+	}
+	matched := map[string]struct{}{}
+	if catalog != nil && strings.TrimSpace(query) != "" {
+		for _, id := range matchedFeatureIDs(query, metaByPDF, catalog) {
+			matched[id] = struct{}{}
+		}
+	}
+	lines := formatGlossaryLines(metaByPDF, pdfTitles, catalog, matched)
+	if len(lines) == 0 && len(matched) > 0 {
+		lines = formatGlossaryLines(metaByPDF, pdfTitles, catalog, nil)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Book terminology for indexed PDFs (include matching PDF-specific terms in your keywords):\n" + strings.Join(lines, "\n")
+}
+
+func formatGlossaryLines(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, featureFilter map[string]struct{}) []string {
+	var lines []string
+	for pdfID, meta := range metaByPDF {
+		title := pdfTitles[pdfID]
+		if title == "" {
+			title = pdfID
+		}
+		for _, g := range meta.Glossary {
+			if len(g.Terms) == 0 {
+				continue
+			}
+			if len(featureFilter) > 0 {
+				if _, ok := featureFilter[g.FeatureID]; !ok {
+					continue
+				}
+			}
+			featureLabel := g.FeatureID
+			if catalog != nil {
+				if feat, ok := catalog.FeatureByID(g.FeatureID); ok {
+					if name := strings.TrimSpace(feat.Name); name != "" {
+						featureLabel = name + " (" + g.FeatureID + ")"
+					}
+				}
+			}
+			lines = append(lines, fmt.Sprintf("- %s / %s: %s", title, featureLabel, strings.Join(g.Terms, ", ")))
+		}
+	}
+	sort.Strings(lines)
+	return lines
 }
 
 func loadConceptCatalogFromEnv() *rpgconcepts.ConceptCatalog {
@@ -216,4 +333,151 @@ func CitationSectionIDs(query string, metaByPDF map[string]models.PDFIndexMeta, 
 		}
 	}
 	return out
+}
+
+// FeatureDefinitionQuery builds a keyword query for hybrid search when building cheatsheet entries.
+func FeatureDefinitionQuery(catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string) string {
+	if catalog == nil {
+		return featureID + " rules definition"
+	}
+	seen := map[string]struct{}{}
+	var parts []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		parts = append(parts, s)
+	}
+	if feat, ok := catalog.FeatureByID(featureID); ok {
+		add(feat.Name)
+		for _, syn := range feat.Synonyms {
+			add(syn)
+		}
+		for _, w := range strings.Fields(feat.Description) {
+			w = strings.Trim(w, ".,;:\"'()[]")
+			if len(w) >= 4 {
+				add(w)
+			}
+		}
+		for _, q := range feat.Questions {
+			for _, w := range strings.Fields(q) {
+				w = strings.Trim(w, ".,;:?\"'()[]")
+				if len(w) >= 4 {
+					add(w)
+				}
+			}
+		}
+	}
+	for _, g := range glossary {
+		if g.FeatureID != featureID {
+			continue
+		}
+		for _, term := range g.Terms {
+			add(term)
+		}
+	}
+	add("rules")
+	add("definition")
+	if len(parts) == 0 {
+		return featureID + " rules definition"
+	}
+	return strings.Join(parts, " ")
+}
+
+const cheatsheetCitationSnippetWords = 400
+
+// CheatsheetCitationHits returns search hits for sections cited by matching cheatsheet entries.
+func CheatsheetCitationHits(st store.Store, gameID, userQuery string) ([]models.SearchHit, error) {
+	pdfs, err := st.ListGamePDFs(gameID)
+	if err != nil {
+		return nil, err
+	}
+	if len(pdfs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(pdfs))
+	titles := map[string]string{}
+	pdfOrder := map[string]int{}
+	for i, p := range pdfs {
+		ids[i] = p.ID
+		titles[p.ID] = p.Title
+		pdfOrder[p.ID] = p.SortOrder
+	}
+	metaByPDF, err := st.ListPDFIndexMeta(ids)
+	if err != nil {
+		return nil, err
+	}
+	catalog := loadConceptCatalogFromEnv()
+	matched := matchedFeaturesForQuery(userQuery, metaByPDF, catalog)
+
+	var hits []models.SearchHit
+	seen := map[string]struct{}{}
+	for _, pdf := range pdfs {
+		sections, err := st.ListTOCSections(pdf.ID)
+		if err != nil {
+			return nil, err
+		}
+		sectionByID := map[string]models.TOCSection{}
+		for _, sec := range sections {
+			sectionByID[sec.ID] = sec
+		}
+		meta := metaByPDF[pdf.ID]
+		for _, entry := range meta.Cheatsheet {
+			if !cheatsheetEntryMatches(entry, matched) || entry.Definition == "" {
+				continue
+			}
+			for _, cit := range entry.Citations {
+				secID := strings.TrimSpace(cit.SectionID)
+				if secID == "" {
+					continue
+				}
+				if _, ok := seen[secID]; ok {
+					continue
+				}
+				sec, ok := sectionByID[secID]
+				if !ok || strings.TrimSpace(sec.PlainText) == "" {
+					continue
+				}
+				seen[secID] = struct{}{}
+				startPage := cit.StartPage
+				endPage := cit.EndPage
+				if startPage == 0 {
+					startPage = sec.StartPage
+				}
+				if endPage == 0 {
+					endPage = sec.EndPage
+				}
+				title := cit.SectionTitle
+				if title == "" {
+					title = sec.Title
+				}
+				hits = append(hits, models.SearchHit{
+					SectionID:    secID,
+					PDFID:        pdf.ID,
+					PDFTitle:     titles[pdf.ID],
+					SectionTitle: title,
+					StartPage:    startPage,
+					EndPage:      endPage,
+					PDFSortOrder: pdfOrder[pdf.ID],
+					Score:        1,
+					Snippet:      cheatsheetCitationSnippet(sec.PlainText),
+				})
+			}
+		}
+	}
+	return hits, nil
+}
+
+func cheatsheetCitationSnippet(text string) string {
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) <= cheatsheetCitationSnippetWords {
+		return strings.Join(words, " ")
+	}
+	return strings.Join(words[:cheatsheetCitationSnippetWords], " ") + "..."
 }

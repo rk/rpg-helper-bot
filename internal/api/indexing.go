@@ -94,12 +94,12 @@ func decodeChatJSON(r *http.Request, dst any) error {
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 
-func chatGlossaryText(st store.Store, gameID, userQuery string) string {
-	text, err := search.GlossaryForGame(st, gameID, userQuery)
+func chatLearnings(st store.Store, gameID, userQuery string) search.ChatLearnings {
+	learnings, err := search.LearningsForChat(st, gameID, userQuery)
 	if err != nil {
-		return ""
+		return search.ChatLearnings{}
 	}
-	return text
+	return learnings
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +137,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if searchResult != nil {
 		hits = searchResult.Hits
 	}
+	if s.Store != nil {
+		if citationHits, err := search.CheatsheetCitationHits(s.Store, running.ID, userMsg); err == nil && len(citationHits) > 0 {
+			hits = search.MergeSearchHits(citationHits, hits, 10)
+		}
+	}
 
 	sources := make([]models.ChatSource, 0, len(hits))
 	for _, h := range hits {
@@ -163,7 +168,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	systemPrompt := llm.BuildSystemPrompt(running, hits, chatGlossaryText(s.Store, running.ID, userMsg))
+	learnings := chatLearnings(s.Store, running.ID, userMsg)
+	systemPrompt := llm.BuildSystemPrompt(running, hits, learnings.Glossary, learnings.Cheatsheet)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 

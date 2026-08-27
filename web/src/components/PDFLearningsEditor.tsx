@@ -142,8 +142,8 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
         <div>
           <h2>Index learnings</h2>
           <p className="hint">
-            LLM-extracted terminology, detected features, and cheatsheet definitions. Used for search expansion and
-            chat context.
+            LLM-extracted terminology, detected features, and cheatsheet definitions. Cheatsheet entries
+            are built via hybrid search (top matching sections) plus one LLM summarize call per feature.
           </p>
         </div>
         <div className="header-actions">
@@ -169,7 +169,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       {!indexed && !hasContent ? (
         <EmptyState
           title="No learnings yet"
-          description="Index this PDF to run the 3-pass LLM learnings pipeline (glossary, features, cheatsheet)."
+          description="Index this PDF to run the learnings pipeline (glossary, features, search-based cheatsheet)."
         />
       ) : !hasContent ? (
         <EmptyState

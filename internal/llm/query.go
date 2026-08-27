@@ -8,7 +8,7 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpg"
 )
 
-func (c *Client) RewriteSearchQuery(ctx context.Context, query string) (string, error) {
+func (c *Client) RewriteSearchQuery(ctx context.Context, query, glossary string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", nil
@@ -20,7 +20,9 @@ func (c *Client) RewriteSearchQuery(ctx context.Context, query string) (string, 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	systemPrompt := renderPrompt(PromptSearchRewrite, nil)
+	systemPrompt := renderPrompt(PromptSearchRewrite, map[string]string{
+		"GLOSSARY": strings.TrimSpace(glossary),
+	})
 	raw, err := c.Complete(ctx, systemPrompt, query)
 	if err != nil {
 		return "", err

@@ -13,7 +13,8 @@ type extractTOCRequest struct {
 	Source          string `json:"source"` // "pages" (default) or "bookmarks"
 	StartPage       int    `json:"start_page,omitempty"`
 	EndPage         int    `json:"end_page,omitempty"`
-	IncludeChildren *bool  `json:"include_children,omitempty"`
+	IncludeChildren *bool  `json:"include_children,omitempty"` // legacy; use bookmark_max_depth
+	BookmarkMaxDepth *int  `json:"bookmark_max_depth,omitempty"`
 }
 
 type extractTOCResponse struct {
@@ -54,11 +55,8 @@ func (s *Server) handleExtractTOC(w http.ResponseWriter, r *http.Request) {
 
 	switch source {
 	case "bookmarks":
-		includeChildren := true
-		if req.IncludeChildren != nil {
-			includeChildren = *req.IncludeChildren
-		}
-		sections, pageCount, err = indexing.ExtractBookmarkSections(pdf.FilePath, includeChildren)
+		maxDepth := indexing.ResolveBookmarkMaxDepth(req.BookmarkMaxDepth, req.IncludeChildren)
+		sections, pageCount, err = indexing.ExtractBookmarkSections(pdf.FilePath, maxDepth)
 	case "pages":
 		if err := indexing.ToolsAvailable(); err != nil {
 			writeError(w, http.StatusServiceUnavailable, err)
@@ -90,7 +88,7 @@ func (s *Server) handleExtractTOC(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) applyImportedTOC(pdfID, filePath, source string, startPage, endPage int, includeChildren bool) (int, error) {
+func (s *Server) applyImportedTOC(pdfID, filePath, source string, startPage, endPage, bookmarkMaxDepth int) (int, error) {
 	var (
 		sections  []models.TOCSection
 		pageCount int
@@ -99,7 +97,7 @@ func (s *Server) applyImportedTOC(pdfID, filePath, source string, startPage, end
 
 	switch source {
 	case "bookmarks":
-		sections, pageCount, err = indexing.ExtractBookmarkSections(filePath, includeChildren)
+		sections, pageCount, err = indexing.ExtractBookmarkSections(filePath, bookmarkMaxDepth)
 	case "pages":
 		if err := indexing.ToolsAvailable(); err != nil {
 			return 0, err

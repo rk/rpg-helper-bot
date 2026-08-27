@@ -306,7 +306,25 @@ func formatTime(t time.Time) string {
 }
 
 func parseTime(s string) (time.Time, error) {
-	return time.Parse(time.RFC3339Nano, s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty time string")
+	}
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05.999999999",
+	}
+	var lastErr error
+	for _, layout := range formats {
+		t, err := time.Parse(layout, s)
+		if err == nil {
+			return t.UTC(), nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
 }
 
 func scanGame(scanner interface {

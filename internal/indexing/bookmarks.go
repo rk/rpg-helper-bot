@@ -11,8 +11,12 @@ import (
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 )
 
+// BookmarkDepthUnlimited imports every nested bookmark level (0).
+const BookmarkDepthUnlimited = 0
+
 // ExtractBookmarkSections builds sections from the PDF outline/bookmarks.
-func ExtractBookmarkSections(pdfPath string, includeChildren bool) ([]models.TOCSection, int, error) {
+// maxDepth: 1 = top level only, 2 = two levels, etc.; 0 = unlimited.
+func ExtractBookmarkSections(pdfPath string, maxDepth int) ([]models.TOCSection, int, error) {
 	pageCount, err := PageCount(pdfPath)
 	if err != nil {
 		return nil, 0, err
@@ -27,7 +31,7 @@ func ExtractBookmarkSections(pdfPath string, includeChildren bool) ([]models.TOC
 	}
 
 	var entries []tocEntry
-	flattenBookmarks(bookmarks, includeChildren, &entries)
+	flattenBookmarks(bookmarks, maxDepth, 1, &entries)
 	entries = dedupeTOCEntries(entries)
 	if len(entries) == 0 {
 		return nil, pageCount, fmt.Errorf("no usable bookmarks with page numbers were found")
@@ -60,14 +64,35 @@ func readPDFBookmarks(pdfPath string) ([]pdfcpu.Bookmark, error) {
 	return bookmarks, nil
 }
 
-func flattenBookmarks(bookmarks []pdfcpu.Bookmark, includeChildren bool, out *[]tocEntry) {
+func flattenBookmarks(bookmarks []pdfcpu.Bookmark, maxDepth, depth int, out *[]tocEntry) {
 	for _, bm := range bookmarks {
 		title := strings.TrimSpace(bm.Title)
 		if title != "" && bm.PageFrom >= 1 {
 			*out = append(*out, tocEntry{Title: title, StartPage: bm.PageFrom})
 		}
-		if includeChildren && len(bm.Kids) > 0 {
-			flattenBookmarks(bm.Kids, true, out)
+		if len(bm.Kids) == 0 {
+			continue
 		}
+		if maxDepth > 0 && depth >= maxDepth {
+			continue
+		}
+		flattenBookmarks(bm.Kids, maxDepth, depth+1, out)
 	}
+}
+
+// ResolveBookmarkMaxDepth maps API options to a bookmark depth (1+ or 0 = unlimited).
+func ResolveBookmarkMaxDepth(maxDepth *int, includeChildren *bool) int {
+	if maxDepth != nil {
+		if *maxDepth < 0 {
+			return BookmarkDepthUnlimited
+		}
+		if *maxDepth == 0 {
+			return BookmarkDepthUnlimited
+		}
+		return *maxDepth
+	}
+	if includeChildren != nil && !*includeChildren {
+		return 1
+	}
+	return BookmarkDepthUnlimited
 }

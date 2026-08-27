@@ -54,7 +54,7 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary string) string {
+func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary, cheatsheet string) string {
 	var excerpts strings.Builder
 	for i, h := range hits {
 		fmt.Fprintf(&excerpts, "\n[%d] %s — %s (pages %d-%d)\n%s\n",
@@ -68,8 +68,13 @@ func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary stri
 	if strings.TrimSpace(glossary) != "" {
 		glossaryBlock = strings.TrimSpace(glossary) + "\n"
 	}
+	cheatsheetBlock := ""
+	if strings.TrimSpace(cheatsheet) != "" {
+		cheatsheetBlock = strings.TrimSpace(cheatsheet) + "\n"
+	}
 	return renderPrompt(PromptChatSystem, map[string]string{
 		"GLOSSARY":   glossaryBlock,
+		"CHEATSHEET": cheatsheetBlock,
 		"GAME_NOTES": gameNotes,
 		"EXCERPTS":   excerpts.String(),
 	})

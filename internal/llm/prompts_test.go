@@ -14,7 +14,8 @@ func TestLoadPromptSearchRewrite(t *testing.T) {
 
 func TestRenderPromptChat(t *testing.T) {
 	out := renderPrompt(PromptChatSystem, map[string]string{
-		"GLOSSARY":   "Book terminology:\n- Core: Tests => skill_check\n",
+		"GLOSSARY":   "Book terminology:\n- Core: skill_check → Tests\n",
+		"CHEATSHEET": "Cheatsheet (matching user question):\n- Core / Skill Check (skill_check): Roll a trait die.\n",
 		"GAME_NOTES": "Wild die explosions enabled.\n",
 		"EXCERPTS":   "\n[1] Core — Combat (pages 1-5)\nExample excerpt.\n",
 	})
@@ -26,6 +27,9 @@ func TestRenderPromptChat(t *testing.T) {
 	}
 	if !contains(out, "Tests") {
 		t.Fatalf("missing glossary: %q", out)
+	}
+	if !contains(out, "Roll a trait die") {
+		t.Fatalf("missing cheatsheet: %q", out)
 	}
 }
 
