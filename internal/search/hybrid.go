@@ -44,6 +44,11 @@ type scopedSearchOpts struct {
 }
 
 func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, error) {
+	return s.SearchWithLimit(ctx, gameID, query, finalResultLimit)
+}
+
+// SearchWithLimit runs hybrid search and returns at most limit hits.
+func (s *Service) SearchWithLimit(ctx context.Context, gameID, query string, limit int) (*Result, error) {
 	query = strings.TrimSpace(query)
 	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
 	if query == "" {
@@ -86,7 +91,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 		pdfOrder:  pdfOrder,
 		pdfTitle:  pdfTitle,
 		metaByPDF: metaByPDF,
-	}, scopedSearchOpts{rewriteQuery: true}, citedSections)
+	}, scopedSearchOpts{rewriteQuery: true}, citedSections, limit)
 }
 
 // SearchPDF runs hybrid FTS+embed search scoped to a single indexed PDF.
@@ -119,10 +124,10 @@ func (s *Service) SearchPDF(ctx context.Context, pdfID, query string, meta *mode
 		pdfOrder:  map[string]int{pdfID: 0},
 		pdfTitle:  map[string]string{pdfID: pdf.Title},
 		metaByPDF: metaByPDF,
-	}, scopedSearchOpts{rewriteQuery: false}, citedSections)
+	}, scopedSearchOpts{rewriteQuery: false}, citedSections, finalResultLimit)
 }
 
-func (s *Service) searchScoped(ctx context.Context, query string, scope searchScope, opts scopedSearchOpts, citedSections map[string]struct{}) (*Result, error) {
+func (s *Service) searchScoped(ctx context.Context, query string, scope searchScope, opts scopedSearchOpts, citedSections map[string]struct{}, resultLimit int) (*Result, error) {
 	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
 	if query == "" || len(scope.pdfIDs) == 0 {
 		return &Result{Debug: debug}, nil
@@ -214,8 +219,11 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 		hits = append(hits, sh.hit)
 	}
 
-	if len(hits) > finalResultLimit {
-		hits = hits[:finalResultLimit]
+	if resultLimit <= 0 {
+		resultLimit = finalResultLimit
+	}
+	if len(hits) > resultLimit {
+		hits = hits[:resultLimit]
 	}
 
 	debug.Hits = make([]models.ChatSearchHit, len(hits))

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/chat"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/indexing"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
@@ -124,12 +127,71 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	if s.LLM != nil {
+		if ok := s.handleChatWithTools(r.Context(), w, running, userMsg); ok {
+			return
+		}
+	}
+
+	hits, searchResult, err := prefetchChatContext(r.Context(), s, running.ID, userMsg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeChatHeaders(w, hits, searchResult, s.LLM != nil)
+
+	learnings := chatLearnings(s.Store, running.ID, userMsg)
+	systemPrompt := llm.BuildSystemPrompt(running, hits, learnings.Glossary, learnings.Cheatsheet)
+	if s.LLM != nil {
+		if err := s.LLM.Stream(r.Context(), systemPrompt, userMsg, w); err == nil {
+			return
+		}
+	}
+
+	answer := llm.FallbackAnswer(userMsg, hits)
+	_, _ = w.Write([]byte(answer))
+}
+
+func (s *Server) handleChatWithTools(ctx context.Context, w http.ResponseWriter, running *models.Game, userMsg string) bool {
+	featureIndex, err := chat.BuildFeatureIndex(s.Store, running.ID)
+	if err != nil {
+		return false
+	}
+	systemPrompt := llm.BuildToolChatSystemPrompt(running, featureIndex)
+	tools := chat.NewTools(s.Store, s.Search, running.ID)
+
+	messages, result, err := s.LLM.RunToolLoop(ctx, systemPrompt, userMsg, tools)
+	if errors.Is(err, llm.ErrToolsUnsupported) {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	if !result.ToolsUsed {
+		return false
+	}
+
+	hits := result.SearchHits
+	var searchResult *search.Result
+	searchResult = &search.Result{Hits: hits, Debug: result.Debug}
+	writeChatHeaders(w, hits, searchResult, true)
+
+	if err := s.LLM.StreamMessages(ctx, messages, w); err != nil {
+		return false
+	}
+	return true
+}
+
+func prefetchChatContext(ctx context.Context, s *Server, gameID, userMsg string) ([]models.SearchHit, *search.Result, error) {
 	var searchResult *search.Result
 	if s.Search != nil {
-		searchResult, err = s.Search.Search(r.Context(), running.ID, userMsg)
+		var err error
+		searchResult, err = s.Search.Search(ctx, gameID, userMsg)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			return nil, nil, err
 		}
 	}
 
@@ -138,11 +200,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		hits = searchResult.Hits
 	}
 	if s.Store != nil {
-		if citationHits, err := search.CheatsheetCitationHits(s.Store, running.ID, userMsg); err == nil && len(citationHits) > 0 {
+		if citationHits, err := search.CheatsheetCitationHits(s.Store, gameID, userMsg); err == nil && len(citationHits) > 0 {
 			hits = search.MergeSearchHits(citationHits, hits, 10)
 		}
 	}
+	return hits, searchResult, nil
+}
 
+func writeChatHeaders(w http.ResponseWriter, hits []models.SearchHit, searchResult *search.Result, llmConfigured bool) {
 	sources := make([]models.ChatSource, 0, len(hits))
 	for _, h := range hits {
 		sources = append(sources, models.ChatSource{
@@ -161,26 +226,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	if searchResult != nil {
 		debug := searchResult.Debug
-		debug.LLMConfigured = s.LLM != nil
+		debug.LLMConfigured = llmConfigured
 		if b, err := json.Marshal(debug); err == nil {
 			w.Header().Set("X-RPG-Search-Debug", base64.StdEncoding.EncodeToString(b))
 			w.Header().Set("X-RPG-Search-Debug-Enc", "base64")
 		}
 	}
-
-	learnings := chatLearnings(s.Store, running.ID, userMsg)
-	systemPrompt := llm.BuildSystemPrompt(running, hits, learnings.Glossary, learnings.Cheatsheet)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-
-	if s.LLM != nil {
-		if err := s.LLM.Stream(r.Context(), systemPrompt, userMsg, w); err == nil {
-			return
-		}
-	}
-
-	answer := llm.FallbackAnswer(userMsg, hits)
-	_, _ = w.Write([]byte(answer))
 }
 
 func lastUserMessage(messages []chatMessage) string {

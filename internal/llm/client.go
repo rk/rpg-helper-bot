@@ -31,16 +31,43 @@ func NewClient() *Client {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolDefinition struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+type FunctionDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
 }
 
 type chatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Stream         bool            `json:"stream"`
-	Format         string          `json:"format,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model          string           `json:"model"`
+	Messages       []Message        `json:"messages"`
+	Stream         bool             `json:"stream"`
+	Tools          []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice     any              `json:"tool_choice,omitempty"`
+	Format         string           `json:"format,omitempty"`
+	ResponseFormat *responseFormat  `json:"response_format,omitempty"`
 }
 
 type responseFormat struct {
@@ -77,6 +104,21 @@ func BuildSystemPrompt(game *models.Game, hits []models.SearchHit, glossary, che
 		"CHEATSHEET": cheatsheetBlock,
 		"GAME_NOTES": gameNotes,
 		"EXCERPTS":   excerpts.String(),
+	})
+}
+
+func BuildToolChatSystemPrompt(game *models.Game, featureIndex string) string {
+	gameNotes := ""
+	if game != nil && strings.TrimSpace(game.Notes) != "" {
+		gameNotes = "Table notes / optional rules in use:\n" + game.Notes + "\n"
+	}
+	featureBlock := ""
+	if strings.TrimSpace(featureIndex) != "" {
+		featureBlock = strings.TrimSpace(featureIndex) + "\n"
+	}
+	return renderPrompt(PromptChatSystemTools, map[string]string{
+		"FEATURE_INDEX": featureBlock,
+		"GAME_NOTES":    gameNotes,
 	})
 }
 
@@ -128,13 +170,17 @@ func (c *Client) complete(ctx context.Context, systemPrompt, userMessage string,
 }
 
 func (c *Client) Stream(ctx context.Context, systemPrompt, userMessage string, w io.Writer) error {
+	return c.StreamMessages(ctx, []Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userMessage},
+	}, w)
+}
+
+func (c *Client) StreamMessages(ctx context.Context, messages []Message, w io.Writer) error {
 	body, _ := json.Marshal(chatRequest{
-		Model: c.Model,
-		Messages: []Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userMessage},
-		},
-		Stream: true,
+		Model:    c.Model,
+		Messages: messages,
+		Stream:   true,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
@@ -176,6 +222,39 @@ func (c *Client) Stream(ctx context.Context, systemPrompt, userMessage string, w
 		}
 	}
 	return scanner.Err()
+}
+
+// CompleteWithTools sends a non-streaming chat completion with tool definitions.
+func (c *Client) CompleteWithTools(ctx context.Context, messages []Message, tools []ToolDefinition) (Message, error) {
+	reqBody := chatRequest{
+		Model:    c.Model,
+		Messages: messages,
+		Stream:   false,
+		Tools:    tools,
+	}
+	body, _ := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Message{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return Message{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return Message{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var out chatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return Message{}, err
+	}
+	if len(out.Choices) == 0 {
+		return Message{}, fmt.Errorf("empty llm response")
+	}
+	return out.Choices[0].Message, nil
 }
 
 func FallbackAnswer(userMessage string, hits []models.SearchHit) string {

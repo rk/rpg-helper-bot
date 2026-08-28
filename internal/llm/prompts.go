@@ -10,6 +10,7 @@ type PromptID string
 
 const (
 	PromptChatSystem        PromptID = "chat-system"
+	PromptChatSystemTools   PromptID = "chat-system-tools"
 	PromptSearchRewrite     PromptID = "search-rewrite"
 	PromptGlossaryExtract   PromptID = "glossary"
 	PromptFeatureDetect     PromptID = "feature-detect"
@@ -20,6 +21,7 @@ const (
 
 var defaultPromptFiles = map[PromptID]string{
 	PromptChatSystem:        "chat-system.md",
+	PromptChatSystemTools:   "chat-system-tools.md",
 	PromptSearchRewrite:     "search-rewrite-system.md",
 	PromptGlossaryExtract:   "glossary-extract-system.md",
 	PromptFeatureDetect:     "feature-detect-system.md",
@@ -30,6 +32,7 @@ var defaultPromptFiles = map[PromptID]string{
 
 var defaultPromptEnv = map[PromptID]string{
 	PromptChatSystem:        "RPG_HELPER_PROMPT_CHAT",
+	PromptChatSystemTools:   "RPG_HELPER_PROMPT_CHAT_TOOLS",
 	PromptSearchRewrite:     "RPG_HELPER_PROMPT_SEARCH_REWRITE",
 	PromptGlossaryExtract:   "RPG_HELPER_PROMPT_GLOSSARY",
 	PromptFeatureDetect:     "RPG_HELPER_PROMPT_FEATURE_DETECT",
@@ -55,6 +58,25 @@ When cheatsheet entries are provided, treat them as indexed summaries and prefer
 
 Rule excerpts (later books override earlier ones on conflict):
 {{EXCERPTS}}
+`,
+	PromptChatSystemTools: `{{RPG_DOMAIN}}
+
+You are a helpful tabletop RPG rules assistant for this game.
+
+Before searching, identify the relevant feature(s) for the user's question using the feature index below.
+Use tools in this order when answering:
+1. lookup_glossary — for feature_id or ambiguous terms to resolve this book's terminology first
+2. lookup_cheatsheet — for each relevant feature_id once word choice is clear
+3. search — with a query enriched by glossary synonyms and cheatsheet context
+
+Answer using ONLY content returned by your tools. Cite search results as [1], [2], etc.
+If tools return no relevant rules, say you could not find it in the indexed rules.
+Preserve dice notation exactly (e.g. 2D6, d8, 2D6-2, 2D) — do not rewrite or expand dice expressions.
+Format answers in Markdown.
+
+{{FEATURE_INDEX}}
+
+{{GAME_NOTES}}
 `,
 	PromptSearchRewrite: `{{RPG_DOMAIN}}
 
@@ -150,7 +172,7 @@ func renderPrompt(id PromptID, vars map[string]string) string {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
 	}
 	// Remove unused placeholders.
-	for _, key := range []string{"RPG_DOMAIN", "JSON_OUTPUT", "GLOSSARY", "CHEATSHEET", "GAME_NOTES", "EXCERPTS"} {
+	for _, key := range []string{"RPG_DOMAIN", "JSON_OUTPUT", "GLOSSARY", "CHEATSHEET", "GAME_NOTES", "EXCERPTS", "FEATURE_INDEX"} {
 		out = strings.ReplaceAll(out, "{{"+key+"}}", "")
 	}
 	return strings.TrimSpace(out) + "\n"
