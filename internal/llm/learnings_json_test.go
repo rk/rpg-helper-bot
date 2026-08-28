@@ -146,12 +146,13 @@ func TestRepairJSONStringLiterals_newlinesInDefinition(t *testing.T) {
   "citations": []
 }`
 	fixed := repairLLMJSON(broken)
-	var resp flexCheatsheetResponse
-	if err := json.Unmarshal([]byte(fixed), &resp); err != nil {
+	var raw flexCheatsheetResponse
+	if err := json.Unmarshal([]byte(fixed), &raw); err != nil {
 		t.Fatalf("parse repaired: %v; fixed=%q", err, fixed)
 	}
-	if !strings.Contains(resp.Definition, "First paragraph.") || !strings.Contains(resp.Definition, "Second paragraph.") {
-		t.Fatalf("unexpected definition: %q", resp.Definition)
+	def := parseFlexibleDefinition(raw.Definition)
+	if !strings.Contains(def, "First paragraph.") || !strings.Contains(def, "Second paragraph.") {
+		t.Fatalf("unexpected definition: %q", def)
 	}
 }
 
@@ -194,6 +195,75 @@ func TestParseCheatsheetJSON_sectionIDArray(t *testing.T) {
 	}
 	if resp.Citations[0].SectionID != "id-1" || resp.Citations[1].SectionID != "id-2" {
 		t.Fatalf("unexpected ids: %+v", resp.Citations)
+	}
+}
+
+func TestParseCheatsheetJSON_nestedDefinitionObject(t *testing.T) {
+	raw := `{
+  "feature_id": "target_number",
+  "definition": {
+    "definition": "In this system, a **target number** is a fixed numerical threshold."
+  },
+  "citations": [
+    {"section_title": "Skill Checks", "section_id": "41c5a717-b8ce-483f-8a94-ecebb26b9a5d", "start_page": 51, "end_page": 51}
+  ]
+}`
+	resp, err := parseCheatsheetJSON(raw, llmParseContext{Pass: "cheatsheet", ChunkNum: 1, ChunkTotal: 1, FeatureID: "target_number"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.FeatureID != "target_number" {
+		t.Fatalf("unexpected feature_id: %q", resp.FeatureID)
+	}
+	if !strings.Contains(resp.Definition, "target number") {
+		t.Fatalf("unexpected definition: %q", resp.Definition)
+	}
+	if len(resp.Citations) != 1 || resp.Citations[0].SectionID != "41c5a717-b8ce-483f-8a94-ecebb26b9a5d" {
+		t.Fatalf("unexpected citations: %+v", resp.Citations)
+	}
+}
+
+func TestParseCheatsheetJSON_flexiblePageFields(t *testing.T) {
+	raw := `{
+  "feature_id": "feat",
+  "definition": "Edges are special abilities acquired through hindrances.",
+  "citations": [
+    {
+      "section_title": "Traits",
+      "section_id": "1aa047a-8309-46b-0a571-251e41caet42",
+      "start_page": 9,
+      "end_page": 9
+    },
+    {
+      "section_title": "Hindrances",
+      "section_id": "58ec9f4a-6f12-4909-8ec2-a9368fe84259",
+      "start_page": 57,
+      "end_page": 57
+    },
+    {
+      "section_id": null,
+      "section_title": "Edges",
+      "section_id": "",
+      "start_page": 0,
+      "end_page": ""
+    }
+  ]
+}`
+	resp, err := parseCheatsheetJSON(raw, llmParseContext{Pass: "cheatsheet", ChunkNum: 1, ChunkTotal: 1, FeatureID: "feat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resp.Definition, "Edges") {
+		t.Fatalf("unexpected definition: %q", resp.Definition)
+	}
+	if len(resp.Citations) != 3 {
+		t.Fatalf("expected 3 citations, got %d: %+v", len(resp.Citations), resp.Citations)
+	}
+	if resp.Citations[0].StartPage != 9 || resp.Citations[1].EndPage != 57 {
+		t.Fatalf("unexpected page numbers: %+v", resp.Citations)
+	}
+	if resp.Citations[2].SectionTitle != "Edges" || resp.Citations[2].EndPage != 0 {
+		t.Fatalf("expected title-only citation for Edges, got %+v", resp.Citations[2])
 	}
 }
 

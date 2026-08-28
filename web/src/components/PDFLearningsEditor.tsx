@@ -20,13 +20,15 @@ function newCitation(): CheatsheetCitation {
   return { section_title: "", start_page: 1 };
 }
 
+type LearningsPass = "glossary" | "features" | "cheatsheet";
+
 export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; indexed: boolean }) {
   const { showError, showInfo } = useToast();
   const { runIndex } = useIndexing();
   const [meta, setMeta] = useState<PDFIndexMeta | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuilding, setRebuilding] = useState<LearningsPass | null>(null);
   const [featureInput, setFeatureInput] = useState("");
 
   const load = async () => {
@@ -112,21 +114,25 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     return data.llm_learnings_skipped || data.features.some((id) => !done.has(id));
   };
 
-  const retryCheatsheet = async () => {
-    setRebuilding(true);
+  const rerunPass = async (pass: LearningsPass, label: string) => {
+    setRebuilding(pass);
     try {
       await runIndex(pdfId, async () => {
-        await api.rebuildCheatsheet(pdfId);
+        if (pass === "glossary") await api.rebuildGlossary(pdfId);
+        else if (pass === "features") await api.rebuildFeatures(pdfId);
+        else await api.rebuildCheatsheet(pdfId);
       });
       await load();
-      showInfo("Cheatsheet rebuild finished");
+      showInfo(`${label} finished`);
     } catch (err) {
       await load();
-      showError(err instanceof Error ? err.message : "Cheatsheet rebuild failed");
+      showError(err instanceof Error ? err.message : `${label} failed`);
     } finally {
-      setRebuilding(false);
+      setRebuilding(null);
     }
   };
+
+  const canRerun = indexed && !dirty && rebuilding === null;
 
   if (loading) {
     return <p className="muted">Loading index learnings…</p>;
@@ -142,8 +148,9 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
         <div>
           <h2>Index learnings</h2>
           <p className="hint">
-            LLM-extracted terminology, detected features, and cheatsheet definitions. Cheatsheet entries
-            are built via hybrid search (top matching sections) plus one LLM summarize call per feature.
+            LLM-extracted terminology, detected features, and cheatsheet definitions. Re-run individual
+            passes after saving manual edits, or to retry a failed step. Cheatsheet uses hybrid search
+            plus one LLM summarize call per feature.
           </p>
         </div>
         <div className="header-actions">
@@ -153,18 +160,22 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
             </span>
           )}
           {needsCheatsheetRetry(meta) && (
-            <button type="button" className="btn" onClick={retryCheatsheet} disabled={rebuilding || dirty}>
-              {rebuilding ? "Rebuilding cheatsheet…" : "Retry cheatsheet"}
-            </button>
+            <span className="badge badge-warn" title="One or more cheatsheet entries are missing">
+              Cheatsheet incomplete
+            </span>
           )}
-          <button type="button" className="btn" onClick={load} disabled={rebuilding}>
+          <button type="button" className="btn" onClick={load} disabled={rebuilding !== null}>
             Reload
           </button>
-          <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
+          <button type="button" className="btn primary" onClick={save} disabled={!dirty || rebuilding !== null}>
             Save learnings
           </button>
         </div>
       </div>
+
+      {dirty && indexed && (
+        <p className="hint learnings-dirty-hint">Save manual edits before re-running LLM passes.</p>
+      )}
 
       {!indexed && !hasContent ? (
         <EmptyState
@@ -193,16 +204,27 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       <div className="learnings-section card">
         <div className="learnings-section-header">
           <h3>Glossary</h3>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setMeta({ ...meta, glossary: [...meta.glossary, newGlossaryRow()] });
-              setDirty(true);
-            }}
-          >
-            + Add mapping
-          </button>
+          <div className="header-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={!canRerun}
+              title={dirty ? "Save learnings before re-running" : undefined}
+              onClick={() => rerunPass("glossary", "Glossary rebuild")}
+            >
+              {rebuilding === "glossary" ? "Re-running…" : "Re-run LLM"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setMeta({ ...meta, glossary: [...meta.glossary, newGlossaryRow()] });
+                setDirty(true);
+              }}
+            >
+              + Add mapping
+            </button>
+          </div>
         </div>
         <p className="hint">Book terms grouped by canonical feature ID for FTS query expansion.</p>
         {meta.glossary.length === 0 ? (
@@ -264,8 +286,17 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       <div className="learnings-section card">
         <div className="learnings-section-header">
           <h3>Features detected</h3>
+          <button
+            type="button"
+            className="btn"
+            disabled={!canRerun}
+            title={dirty ? "Save learnings before re-running" : undefined}
+            onClick={() => rerunPass("features", "Features rebuild")}
+          >
+            {rebuilding === "features" ? "Re-running…" : "Re-run LLM"}
+          </button>
         </div>
-        <p className="hint">Feature IDs present in this PDF (omit concepts this game does not use).</p>
+        <p className="hint">Feature IDs present in this PDF. Re-run uses the saved glossary above.</p>
         <input
           value={featureInput}
           onChange={(e) => syncFeatures(e.target.value)}
@@ -276,16 +307,33 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
       <div className="learnings-section card">
         <div className="learnings-section-header">
           <h3>Cheatsheet</h3>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setMeta({ ...meta, cheatsheet: [...meta.cheatsheet, newCheatsheetRow()] });
-              setDirty(true);
-            }}
-          >
-            + Add row
-          </button>
+          <div className="header-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={!canRerun || meta.features.length === 0}
+              title={
+                dirty
+                  ? "Save learnings before re-running"
+                  : meta.features.length === 0
+                    ? "Detect features first"
+                    : undefined
+              }
+              onClick={() => rerunPass("cheatsheet", "Cheatsheet rebuild")}
+            >
+              {rebuilding === "cheatsheet" ? "Re-running…" : "Re-run LLM"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setMeta({ ...meta, cheatsheet: [...meta.cheatsheet, newCheatsheetRow()] });
+                setDirty(true);
+              }}
+            >
+              + Add row
+            </button>
+          </div>
         </div>
         {meta.cheatsheet.length === 0 ? (
           <p className="muted">No cheatsheet rows.</p>

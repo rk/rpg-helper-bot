@@ -10,7 +10,8 @@ import (
 )
 
 // BuildFeatureIndex returns catalog feature entries detected in the game's indexed PDFs.
-// Only features present in index_meta.Features are included; Questions are omitted.
+// Only features present in index_meta.Features are included; Questions and Synonyms are omitted
+// so tools can resolve book-specific terminology from indexed glossary data.
 func BuildFeatureIndex(st store.Store, gameID string) (string, error) {
 	pdfs, err := st.ListGamePDFs(gameID)
 	if err != nil {
@@ -73,8 +74,5 @@ func formatFeatureForChat(f rpgconcepts.Feature) string {
 		fmt.Fprintf(&b, ": %s", desc)
 	}
 	b.WriteByte('\n')
-	if len(f.Synonyms) > 0 {
-		fmt.Fprintf(&b, "  Synonyms: %s\n", strings.Join(f.Synonyms, ", "))
-	}
 	return b.String()
 }

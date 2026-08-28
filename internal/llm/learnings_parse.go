@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
@@ -256,13 +257,13 @@ func stripMarkdownCodeFence(raw string) string {
 type flexCheatsheetCitation struct {
 	SectionID    json.RawMessage `json:"section_id,omitempty"`
 	SectionTitle string          `json:"section_title"`
-	StartPage    int             `json:"start_page"`
-	EndPage      int             `json:"end_page,omitempty"`
+	StartPage    json.RawMessage `json:"start_page,omitempty"`
+	EndPage      json.RawMessage `json:"end_page,omitempty"`
 }
 
 type flexCheatsheetResponse struct {
 	FeatureID  string                   `json:"feature_id"`
-	Definition string                   `json:"definition"`
+	Definition json.RawMessage          `json:"definition"`
 	Citations  []flexCheatsheetCitation `json:"citations"`
 }
 
@@ -282,7 +283,7 @@ func parseCheatsheetJSON(raw string, ctx llmParseContext) (*cheatsheetLLMRespons
 		}
 		return &cheatsheetLLMResponse{
 			FeatureID:  flex.FeatureID,
-			Definition: flex.Definition,
+			Definition: parseFlexibleDefinition(flex.Definition),
 			Citations:  normalizeCheatsheetCitations(flex.Citations),
 		}, nil
 	}
@@ -292,31 +293,88 @@ func parseCheatsheetJSON(raw string, ctx llmParseContext) (*cheatsheetLLMRespons
 		ctx.Pass, ctx.ChunkNum, ctx.ChunkTotal, featureLabel(ctx.FeatureID), lastErr)
 }
 
+func parseFlexibleDefinition(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	var nested struct {
+		Definition string `json:"definition"`
+		Text       string `json:"text"`
+		Summary    string `json:"summary"`
+	}
+	if err := json.Unmarshal(raw, &nested); err == nil {
+		for _, v := range []string{nested.Definition, nested.Text, nested.Summary} {
+			if v = strings.TrimSpace(v); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
 func normalizeCheatsheetCitations(in []flexCheatsheetCitation) []models.CheatsheetCitation {
 	var out []models.CheatsheetCitation
 	for _, c := range in {
+		startPage := parseFlexiblePageNumber(c.StartPage)
+		endPage := parseFlexiblePageNumber(c.EndPage)
+		if endPage > 0 && endPage < startPage {
+			endPage = startPage
+		}
+		title := strings.TrimSpace(c.SectionTitle)
 		ids := parseFlexibleSectionIDs(c.SectionID)
 		if len(ids) == 0 {
-			if strings.TrimSpace(c.SectionTitle) == "" && c.StartPage <= 0 {
+			if title == "" && startPage <= 0 {
 				continue
 			}
 			out = append(out, models.CheatsheetCitation{
-				SectionTitle: strings.TrimSpace(c.SectionTitle),
-				StartPage:    c.StartPage,
-				EndPage:      c.EndPage,
+				SectionTitle: title,
+				StartPage:    startPage,
+				EndPage:      endPage,
 			})
 			continue
 		}
 		for _, id := range ids {
 			out = append(out, models.CheatsheetCitation{
 				SectionID:    id,
-				SectionTitle: strings.TrimSpace(c.SectionTitle),
-				StartPage:    c.StartPage,
-				EndPage:      c.EndPage,
+				SectionTitle: title,
+				StartPage:    startPage,
+				EndPage:      endPage,
 			})
 		}
 	}
 	return out
+}
+
+func parseFlexiblePageNumber(raw json.RawMessage) int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		if n < 0 {
+			return 0
+		}
+		return n
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil && f > 0 {
+		return int(f)
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return 0
+		}
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func parseFlexibleSectionIDs(raw json.RawMessage) []string {

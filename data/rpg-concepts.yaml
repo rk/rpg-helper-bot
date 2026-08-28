@@ -22,6 +22,33 @@ features:
       - attribute
       - ability
       - trait
+      - stat
+      - derived stat
+  - id: player_character
+    name: Player Character
+    description: "A Player Character (PC) represents the character controlled by a player."
+    questions:
+      - "What are the player characters called? Are they called PCs or something else?"
+      - "Do player characters have unique features that set them apart from NPCs? If so, what are they?"
+      - "Do player characters have races, ancestry, or other unique origin details? If so, what are they?"
+    synonyms:
+      - PC
+      - player character
+      - character
+      - hero
+  - id: class
+    name: Character Class
+    description: "A Character Class represents a character's role in the game world, such as a warrior, wizard, or rogue. Often paired with one attribute as their strong suit, and often grants skills and/or feats."
+    questions:
+      - "What are the character's classes called?"
+      - "What do classes require to qualify the player character for the class?"
+      - "What do classes grant the player character?"
+      - "Can player characters have multiple classes?"
+    synonyms:
+      - class
+      - character Class
+      - profession
+      - archetype
   - id: skill_check
     name: Skill Check
     description: "Rolling dice to resolve an action using a skill, trait, or attribute."
@@ -58,7 +85,7 @@ features:
       - attribute roll
   - id: benny
     name: Benny
-    description: "A meta-currency used during gameplay."
+    description: "A meta-currency used during gameplay, often for bonuses, rerolls, or narrative fiat (costing a benny)."
     questions:
       - "How are bennies used?"
       - "How are bennies gained?"
@@ -102,8 +129,33 @@ features:
       - "What do feats do?"
       - "How are feats gained?"
       - "How are feats used?"
+      - "Are feats typically handled as a tree with prerequisites, or are they a flat list of options?"
     synonyms:
       - feat
       - edge
       - stunt
       - aspect
+      - foci
+      - talent
+  - id: initiative
+    name: Initiative
+    description: "A system for determining the order of play during combat, or other turn-based encounters."
+    questions:
+      - "What determines the initiative order?"
+      - "How does initiative work?"
+      - "Is initiative used for anything other than combat?"
+    synonyms:
+      - initiative
+      - turn order
+  - id: combat
+    name: Combat
+    description: "A system for resolving conflicts between player characters and non-player characters (NPCs)."
+    questions:
+      - "How does combat work?"
+      - "Is combat resolved by simultaneous turns, or in order of initiative? (Simultaneous turns may dictate what happens during the round, and just that actions and incapacitation happen at the end.)"
+      - "What are the basic rules for combat?"
+    synonyms:
+      - combat
+      - combat system
+      - combat rules
+      - combat mechanics

@@ -50,8 +50,8 @@ func TestBuildFeatureIndex_onlyDetectedFeatures(t *testing.T) {
 	if strings.Contains(out, "Questions") || strings.Contains(out, "How are skill checks") {
 		t.Fatalf("expected questions omitted: %q", out)
 	}
-	if !strings.Contains(out, "Synonyms:") {
-		t.Fatalf("expected catalog synonyms in index: %q", out)
+	if strings.Contains(out, "Synonyms:") {
+		t.Fatalf("expected catalog synonyms omitted from feature index: %q", out)
 	}
 }
 

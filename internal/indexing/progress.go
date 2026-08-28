@@ -172,6 +172,13 @@ func progressCheatsheetDone(pdfID string, total int) {
 	})
 }
 
+func progressLearningsPassDone(pdfID string, message string) {
+	setProgress(IndexProgress{
+		PDFID: pdfID, Phase: IndexPhaseDone,
+		Percent: 100, Message: message, Active: false,
+	})
+}
+
 func progressFinalize(pdfID string) {
 	setProgress(IndexProgress{
 		PDFID: pdfID, Phase: IndexPhaseFinalize,

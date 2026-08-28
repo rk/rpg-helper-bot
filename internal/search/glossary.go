@@ -534,7 +534,7 @@ func LookupCheatsheetByFeature(st store.Store, gameID, featureID string) (string
 	return strings.TrimSpace(cs.String()), nil
 }
 
-// LookupGlossaryByFeature returns book terminology and catalog synonyms for a feature.
+// LookupGlossaryByFeature returns book-specific terminology for a feature from indexed PDFs.
 func LookupGlossaryByFeature(st store.Store, gameID, featureID string) (string, error) {
 	featureID = strings.TrimSpace(featureID)
 	if featureID == "" {
@@ -572,36 +572,10 @@ func LookupGlossaryByTerm(st store.Store, gameID, term string) (string, error) {
 
 func formatGlossaryLookup(metaByPDF map[string]models.PDFIndexMeta, pdfTitles map[string]string, catalog *rpgconcepts.ConceptCatalog, featureFilter map[string]struct{}) string {
 	lines := formatGlossaryLines(metaByPDF, pdfTitles, catalog, featureFilter)
-	var b strings.Builder
-	if len(lines) > 0 {
-		b.WriteString("Book terminology:\n")
-		b.WriteString(strings.Join(lines, "\n"))
-	}
-	var synLines []string
-	for id := range featureFilter {
-		if catalog == nil {
-			continue
-		}
-		if feat, ok := catalog.FeatureByID(id); ok && len(feat.Synonyms) > 0 {
-			name := feat.Name
-			if name == "" {
-				name = id
-			}
-			synLines = append(synLines, fmt.Sprintf("- %s (%s): %s", name, id, strings.Join(feat.Synonyms, ", ")))
-		}
-	}
-	sort.Strings(synLines)
-	if len(synLines) > 0 {
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString("Catalog synonyms:\n")
-		b.WriteString(strings.Join(synLines, "\n"))
-	}
-	if b.Len() == 0 {
+	if len(lines) == 0 {
 		return "No glossary entries found for the requested feature(s)."
 	}
-	return strings.TrimSpace(b.String())
+	return "Book terminology:\n" + strings.Join(lines, "\n")
 }
 
 func gameIndexMeta(st store.Store, gameID string) (map[string]models.PDFIndexMeta, map[string]string, *rpgconcepts.ConceptCatalog, error) {

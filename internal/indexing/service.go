@@ -186,33 +186,28 @@ func sectionPlainText(pdfPath string, sec models.TOCSection, splitTexts map[stri
 	return ExtractPages(pdfPath, sec.StartPage, sec.EndPage)
 }
 
+func (s *Service) RebuildGlossary(ctx context.Context, pdfID string) (*models.PDFIndexMeta, error) {
+	inputs, err := loadLearningsRebuildInputs(s.Store, s.ConceptsPath, pdfID)
+	if err != nil {
+		return nil, err
+	}
+	return RebuildPDFGlossary(ctx, s.LLM, s.Store, inputs, pdfID)
+}
+
+func (s *Service) RebuildFeatures(ctx context.Context, pdfID string) (*models.PDFIndexMeta, error) {
+	inputs, err := loadLearningsRebuildInputs(s.Store, s.ConceptsPath, pdfID)
+	if err != nil {
+		return nil, err
+	}
+	return RebuildPDFFeatures(ctx, s.LLM, s.Store, inputs, pdfID)
+}
+
 func (s *Service) RebuildCheatsheet(ctx context.Context, pdfID string) (*models.PDFIndexMeta, error) {
-	pdf, err := s.Store.GetPDF(pdfID)
+	inputs, err := loadLearningsRebuildInputs(s.Store, s.ConceptsPath, pdfID)
 	if err != nil {
 		return nil, err
 	}
-	if pdf.IndexStatus != models.IndexStatusIndexed {
-		return nil, fmt.Errorf("pdf must be indexed before rebuilding cheatsheet")
-	}
-
-	sections, err := s.Store.ListTOCSections(pdfID)
-	if err != nil {
-		return nil, err
-	}
-	if len(sections) == 0 {
-		return nil, fmt.Errorf("add TOC sections before rebuilding cheatsheet")
-	}
-
-	conceptPath := s.ConceptsPath
-	if conceptPath == "" {
-		conceptPath = rpgconcepts.DefaultConceptsPath()
-	}
-	catalog, err := rpgconcepts.LoadConcepts(conceptPath)
-	if err != nil {
-		return nil, fmt.Errorf("concepts: %w", err)
-	}
-
-	return RebuildPDFCheatsheet(ctx, s.Search, s.LLM, s.Store, catalog, sections, pdfID)
+	return RebuildPDFCheatsheet(ctx, s.Search, s.LLM, s.Store, inputs.catalog, inputs.sections, pdfID)
 }
 
 func pageRangeKey(key pageRange) string {

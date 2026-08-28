@@ -229,6 +229,11 @@ func (c *Client) extractPDFGlossaryFromWordStats(ctx context.Context, catalog *r
 	return validateGlossary(resp.Glossary, catalog), nil
 }
 
+// ExtractPDFGlossary runs the glossary LLM pass over section word stats.
+func (c *Client) ExtractPDFGlossary(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, sections []SectionSample) ([]models.PDFGlossaryEntry, error) {
+	return c.extractPDFGlossaryFromWordStats(ctx, catalog, sections)
+}
+
 func (c *Client) detectPDFFeaturesFromWordStats(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, sections []SectionSample) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, learningsTimeout)
 	defer cancel()
@@ -273,6 +278,11 @@ func (c *Client) detectPDFFeaturesFromWordStats(ctx context.Context, catalog *rp
 		return nil, err
 	}
 	return validateFeatures(resp.Features, catalog), nil
+}
+
+// DetectPDFFeatures runs the features LLM pass using glossary and section word stats.
+func (c *Client) DetectPDFFeatures(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, sections []SectionSample) ([]string, error) {
+	return c.detectPDFFeaturesFromWordStats(ctx, catalog, glossary, sections)
 }
 
 func mergeGlossary(existing, updated []models.PDFGlossaryEntry) []models.PDFGlossaryEntry {

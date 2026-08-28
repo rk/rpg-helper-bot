@@ -96,7 +96,7 @@ func TestLookupGlossaryByFeature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Tests") || !strings.Contains(out, "Catalog synonyms") {
+	if !strings.Contains(out, "Tests") || strings.Contains(out, "Catalog synonyms") {
 		t.Fatalf("unexpected glossary output: %q", out)
 	}
 }

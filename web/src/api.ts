@@ -211,6 +211,10 @@ export const api = {
   getIndexMeta: (id: string) => request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`),
   saveIndexMeta: (id: string, meta: PDFIndexMeta) =>
     request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta`, { method: "PUT", body: JSON.stringify(meta) }),
+  rebuildGlossary: (id: string) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-glossary`, { method: "POST" }),
+  rebuildFeatures: (id: string) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-features`, { method: "POST" }),
   rebuildCheatsheet: (id: string) =>
     request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-cheatsheet`, { method: "POST" }),
   thumbnailURL: (id: string) => `/api/pdfs/${id}/thumbnail`,

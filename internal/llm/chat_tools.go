@@ -56,7 +56,7 @@ func ChatToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "lookup_glossary",
-				Description: "Look up book-specific terminology and catalog synonyms for a feature or term. Call this first to resolve word-choice ambiguity before cheatsheet lookup and search.",
+				Description: "Look up book-specific terminology for a feature or term. Call this first to resolve word-choice ambiguity before cheatsheet lookup and search.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
