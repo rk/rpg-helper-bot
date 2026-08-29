@@ -14,7 +14,7 @@ import (
 
 const (
 	excerptMaxWords        = 1000
-	learningsTimeout       = 120 * time.Second
+	learningsTimeout       = 180 * time.Second
 	cheatsheetSearchHits   = 5
 	cheatsheetExcerptWords = 800
 	llmResponsePreview     = 500
@@ -198,7 +198,7 @@ func (c *Client) extractPDFGlossaryFromWordStats(ctx context.Context, catalog *r
 	ctx, cancel := context.WithTimeout(ctx, learningsTimeout)
 	defer cancel()
 
-	wordTSV := BuildWordFrequencyTSV(sections, wordStatsTopN)
+	wordTSV := BuildWordFrequencyTSV(sections, wordStatsTopN, catalog)
 	tokenCount := DocumentTokenCount(sections)
 
 	var b strings.Builder
@@ -238,7 +238,7 @@ func (c *Client) detectPDFFeaturesFromWordStats(ctx context.Context, catalog *rp
 	ctx, cancel := context.WithTimeout(ctx, learningsTimeout)
 	defer cancel()
 
-	wordTSV := BuildWordFrequencyTSV(sections, wordStatsTopN)
+	wordTSV := BuildWordFrequencyTSV(sections, wordStatsTopN, catalog)
 	candidates := FeatureCandidatesFromWordStats(catalog, glossary, sections)
 
 	var b strings.Builder

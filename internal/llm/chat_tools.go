@@ -92,8 +92,16 @@ func ChatToolDefinitions() []ToolDefinition {
 	}
 }
 
+// ToolLoopOptions configures optional status callbacks during tool rounds.
+type ToolLoopOptions struct {
+	OnRoundStart func(round int)
+	OnThinking   func(content string)
+	OnToolCall   func(name string, argsJSON string)
+	OnToolResult func(name string, argsJSON string, result string, execErr error)
+}
+
 // RunToolLoop executes tool rounds and returns the message history ready for final streaming.
-func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage string, executor ToolExecutor) ([]Message, ChatToolsResult, error) {
+func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage string, executor ToolExecutor, opts *ToolLoopOptions) ([]Message, ChatToolsResult, error) {
 	result := ChatToolsResult{}
 	tools := ChatToolDefinitions()
 	messages := []Message{
@@ -102,6 +110,9 @@ func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage stri
 	}
 
 	for round := 0; round < maxToolRounds; round++ {
+		if opts != nil && opts.OnRoundStart != nil {
+			opts.OnRoundStart(round)
+		}
 		assistant, err := c.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
 			if isToolsUnsupportedError(err) {
@@ -110,16 +121,28 @@ func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage stri
 			return nil, result, err
 		}
 		if len(assistant.ToolCalls) == 0 {
+			if strings.TrimSpace(assistant.Content) != "" && opts != nil && opts.OnThinking != nil {
+				opts.OnThinking(strings.TrimSpace(assistant.Content))
+			}
 			collectSearchResult(executor, &result)
 			return messages, result, nil
 		}
 
 		result.ToolsUsed = true
+		if strings.TrimSpace(assistant.Content) != "" && opts != nil && opts.OnThinking != nil {
+			opts.OnThinking(strings.TrimSpace(assistant.Content))
+		}
 		messages = append(messages, assistant)
 		for _, call := range assistant.ToolCalls {
+			if opts != nil && opts.OnToolCall != nil {
+				opts.OnToolCall(call.Function.Name, call.Function.Arguments)
+			}
 			toolResult, execErr := executor.Execute(ctx, call.Function.Name, call.Function.Arguments)
 			if execErr != nil {
 				toolResult = "Error: " + execErr.Error()
+			}
+			if opts != nil && opts.OnToolResult != nil {
+				opts.OnToolResult(call.Function.Name, call.Function.Arguments, toolResult, execErr)
 			}
 			messages = append(messages, Message{
 				Role:       "tool",

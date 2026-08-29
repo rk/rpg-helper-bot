@@ -8,12 +8,15 @@ You receive:
 1. A catalog of canonical features (id, name, description, synonyms).
 2. A TSV of the most frequent document tokens (uppercase, non-alphanumeric stripped) with counts.
 
-Reply with this JSON shape:
+Reply with this JSON shape, one entry per detected glossary entry based upon the features and their synonyms:
+
+```
 {
   "glossary": [
     {"feature_id": "skill_check", "terms": ["Tests", "Trait roll"]}
   ]
 }
+```
 
 Rules:
 - Pick terms best matching the concept (as described) by the word-frequency dictionary and catalog synonyms.

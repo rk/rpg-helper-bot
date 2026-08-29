@@ -1,4 +1,5 @@
 import { ChatSource, ChatSearchDebug } from "./api";
+import { ChatActivityStep, parseChatActivityStep } from "./ChatActivityPanel";
 
 function decodeBase64UTF8(raw: string): string {
   const binary = atob(raw);
@@ -25,4 +26,46 @@ export function parseSourcesHeader(response: Response): ChatSource[] {
 
 export function parseSearchDebugHeader(response: Response): ChatSearchDebug | null {
   return parseEncodedHeader<ChatSearchDebug>(response, "X-RPG-Search-Debug", "X-RPG-Search-Debug-Enc");
+}
+
+type ChatDataPartHandlers = {
+  onStatus?: (message: string) => void;
+  onActivity?: (step: ChatActivityStep) => void;
+  onSources?: (sources: ChatSource[]) => void;
+  onSearchDebug?: (debug: ChatSearchDebug) => void;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+export function applyChatDataPart(dataPart: unknown, handlers: ChatDataPartHandlers): void {
+  if (!isRecord(dataPart) || typeof dataPart.type !== "string") {
+    return;
+  }
+  switch (dataPart.type) {
+    case "chat-status":
+      if (typeof dataPart.message === "string") {
+        handlers.onStatus?.(dataPart.message);
+      }
+      break;
+    case "chat-activity":
+      if (isRecord(dataPart.step)) {
+        const step = parseChatActivityStep(dataPart.step);
+        if (step) {
+          handlers.onActivity?.(step);
+        }
+      }
+      break;
+    case "sources":
+      if (Array.isArray(dataPart.sources)) {
+        handlers.onSources?.(dataPart.sources as ChatSource[]);
+      }
+      break;
+    case "search-debug":
+      if (isRecord(dataPart.debug)) {
+        handlers.onSearchDebug?.(dataPart.debug as ChatSearchDebug);
+      }
+      break;
+  }
 }

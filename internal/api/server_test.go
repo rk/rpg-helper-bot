@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/api"
@@ -146,5 +147,20 @@ func TestChatAcceptsAISDKMessages(t *testing.T) {
 	}
 	if rec.Header().Get("Content-Type") == "application/json" {
 		t.Fatalf("expected text response, got json error: %s", rec.Body.String())
+	}
+	if rec.Header().Get("X-Vercel-AI-Data-Stream") != "v1" {
+		t.Fatalf("expected data stream header, got %q", rec.Header().Get("X-Vercel-AI-Data-Stream"))
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"chat-status"`) {
+		t.Fatalf("expected early status line in body: %q", body)
+	}
+	textIdx := strings.Index(body, "0:")
+	statusIdx := strings.Index(body, "2:")
+	if statusIdx < 0 {
+		t.Fatalf("expected data stream status part: %q", body)
+	}
+	if textIdx >= 0 && textIdx < statusIdx {
+		t.Fatalf("expected status before answer text, body: %q", body)
 	}
 }

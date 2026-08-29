@@ -26,7 +26,7 @@ func NewClient() *Client {
 	return &Client{
 		BaseURL: s.ChatBaseURL,
 		Model:   s.ChatModel,
-		HTTP:    &http.Client{Timeout: 120 * time.Second},
+		HTTP:    &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -169,14 +169,14 @@ func (c *Client) complete(ctx context.Context, systemPrompt, userMessage string,
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
-func (c *Client) Stream(ctx context.Context, systemPrompt, userMessage string, w io.Writer) error {
+func (c *Client) Stream(ctx context.Context, systemPrompt, userMessage string, sink TextStreamSink) error {
 	return c.StreamMessages(ctx, []Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userMessage},
-	}, w)
+	}, sink)
 }
 
-func (c *Client) StreamMessages(ctx context.Context, messages []Message, w io.Writer) error {
+func (c *Client) StreamMessages(ctx context.Context, messages []Message, sink TextStreamSink) error {
 	body, _ := json.Marshal(chatRequest{
 		Model:    c.Model,
 		Messages: messages,
@@ -216,7 +216,7 @@ func (c *Client) StreamMessages(ctx context.Context, messages []Message, w io.Wr
 		}
 		delta := chunk.Choices[0].Delta.Content
 		if delta != "" {
-			if _, err := io.WriteString(w, delta); err != nil {
+			if err := sink.WriteText(delta); err != nil {
 				return err
 			}
 		}

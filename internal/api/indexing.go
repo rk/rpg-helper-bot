@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -127,35 +128,49 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-
-	if s.LLM != nil {
-		if ok := s.handleChatWithTools(r.Context(), w, running, userMsg); ok {
-			return
-		}
-	}
-
-	hits, searchResult, err := prefetchChatContext(r.Context(), s, running.ID, userMsg)
+	stream, err := beginChatStream(w)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeChatHeaders(w, hits, searchResult, s.LLM != nil)
+	_ = stream.WriteStatus("Analyzing question…")
+
+	if s.LLM != nil {
+		if ok := s.handleChatWithTools(r.Context(), stream, running, userMsg); ok {
+			return
+		}
+	}
+
+	_ = stream.WriteStatus("Searching rules…")
+	hits, searchResult, err := prefetchChatContext(r.Context(), s, running.ID, userMsg)
+	if err != nil {
+		_ = stream.WriteStatus("Search failed.")
+		_ = stream.WriteText("Sorry, search failed.")
+		return
+	}
+	if len(hits) > 0 {
+		_ = stream.WriteActivityStep(map[string]any{
+			"kind":    "status",
+			"message": fmt.Sprintf("Found %d rule section(s) to cite", len(hits)),
+		})
+	}
+	writeChatDataParts(stream, hits, searchResult, s.LLM != nil)
 
 	learnings := chatLearnings(s.Store, running.ID, userMsg)
 	systemPrompt := llm.BuildSystemPrompt(running, hits, learnings.Glossary, learnings.Cheatsheet)
 	if s.LLM != nil {
-		if err := s.LLM.Stream(r.Context(), systemPrompt, userMsg, w); err == nil {
+		_ = stream.WriteStatus("Composing answer…")
+		if err := s.LLM.Stream(r.Context(), systemPrompt, userMsg, stream); err == nil {
 			return
 		}
 	}
 
 	answer := llm.FallbackAnswer(userMsg, hits)
-	_, _ = w.Write([]byte(answer))
+	_ = stream.WriteText(answer)
 }
 
-func (s *Server) handleChatWithTools(ctx context.Context, w http.ResponseWriter, running *models.Game, userMsg string) bool {
+func (s *Server) handleChatWithTools(ctx context.Context, stream *ChatStreamWriter, running *models.Game, userMsg string) bool {
+	_ = stream.WriteStatus("Loading feature index…")
 	featureIndex, err := chat.BuildFeatureIndex(s.Store, running.ID)
 	if err != nil {
 		return false
@@ -163,7 +178,38 @@ func (s *Server) handleChatWithTools(ctx context.Context, w http.ResponseWriter,
 	systemPrompt := llm.BuildToolChatSystemPrompt(running, featureIndex)
 	tools := chat.NewTools(s.Store, s.Search, running.ID)
 
-	messages, result, err := s.LLM.RunToolLoop(ctx, systemPrompt, userMsg, tools)
+	opts := &llm.ToolLoopOptions{
+		OnRoundStart: func(round int) {
+			if round > 0 {
+				_ = stream.WriteStatus("Composing answer…")
+			}
+		},
+		OnThinking: func(content string) {
+			_ = stream.WriteActivityStep(map[string]any{
+				"kind":    "thinking",
+				"content": content,
+			})
+		},
+		OnToolCall: func(name, argsJSON string) {
+			_ = stream.WriteStatus(toolStatusMessage(name))
+			_ = stream.WriteActivityStep(map[string]any{
+				"kind": "tool-call",
+				"call": toolCallArgs(name, argsJSON),
+			})
+		},
+		OnToolResult: func(name, argsJSON, result string, execErr error) {
+			step := map[string]any{
+				"kind":    "tool-result",
+				"call":    toolCallArgs(name, argsJSON),
+				"preview": truncateActivityPreview(result, 600),
+			}
+			if execErr != nil {
+				step["error"] = true
+			}
+			_ = stream.WriteActivityStep(step)
+		},
+	}
+	messages, result, err := s.LLM.RunToolLoop(ctx, systemPrompt, userMsg, tools, opts)
 	if errors.Is(err, llm.ErrToolsUnsupported) {
 		return false
 	}
@@ -175,12 +221,12 @@ func (s *Server) handleChatWithTools(ctx context.Context, w http.ResponseWriter,
 	}
 
 	hits := result.SearchHits
-	var searchResult *search.Result
-	searchResult = &search.Result{Hits: hits, Debug: result.Debug}
-	writeChatHeaders(w, hits, searchResult, true)
+	searchResult := &search.Result{Hits: hits, Debug: result.Debug}
+	writeChatDataParts(stream, hits, searchResult, true)
 
-	if err := s.LLM.StreamMessages(ctx, messages, w); err != nil {
-		return false
+	_ = stream.WriteStatus("Composing answer…")
+	if err := s.LLM.StreamMessages(ctx, messages, stream); err != nil {
+		_ = stream.WriteText(llm.FallbackAnswer(userMsg, hits))
 	}
 	return true
 }
@@ -207,7 +253,7 @@ func prefetchChatContext(ctx context.Context, s *Server, gameID, userMsg string)
 	return hits, searchResult, nil
 }
 
-func writeChatHeaders(w http.ResponseWriter, hits []models.SearchHit, searchResult *search.Result, llmConfigured bool) {
+func chatSourcesFromHits(hits []models.SearchHit) []models.ChatSource {
 	sources := make([]models.ChatSource, 0, len(hits))
 	for _, h := range hits {
 		sources = append(sources, models.ChatSource{
@@ -219,6 +265,21 @@ func writeChatHeaders(w http.ResponseWriter, hits []models.SearchHit, searchResu
 			Snippet:      textutil.NormalizePDFText(h.Snippet),
 		})
 	}
+	return sources
+}
+
+func writeChatDataParts(stream *ChatStreamWriter, hits []models.SearchHit, searchResult *search.Result, llmConfigured bool) {
+	sources := chatSourcesFromHits(hits)
+	_ = stream.WriteData(map[string]any{"type": "sources", "sources": sources})
+	if searchResult != nil {
+		debug := searchResult.Debug
+		debug.LLMConfigured = llmConfigured
+		_ = stream.WriteData(map[string]any{"type": "search-debug", "debug": debug})
+	}
+}
+
+func writeChatHeaders(w http.ResponseWriter, hits []models.SearchHit, searchResult *search.Result, llmConfigured bool) {
+	sources := chatSourcesFromHits(hits)
 	if b, err := json.Marshal(sources); err == nil {
 		w.Header().Set("X-RPG-Sources", base64.StdEncoding.EncodeToString(b))
 		w.Header().Set("X-RPG-Sources-Enc", "base64")

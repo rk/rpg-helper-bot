@@ -252,6 +252,73 @@ body {
   font-size: 0.9rem;
 }
 
+.chat-status {
+  font-style: italic;
+}
+
+.chat-activity {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chat-activity-live {
+  margin-bottom: 0.5rem;
+}
+
+.chat-activity > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-style: italic;
+}
+
+.chat-activity-steps {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.chat-activity-step {
+  line-height: 1.4;
+}
+
+.chat-activity-label {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.chat-activity-detail {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.chat-activity-status {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.chat-activity-thinking,
+.chat-activity-result {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  max-height: 12rem;
+  overflow: auto;
+}
+
 .error {
   color: #c45c5c;
 }

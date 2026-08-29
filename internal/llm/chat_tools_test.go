@@ -33,6 +33,8 @@ func (m *mockExecutor) LastDebug() models.ChatSearchDebug {
 }
 
 func TestRunToolLoop_executesToolsThenReturnsMessages(t *testing.T) {
+	var thinking []string
+	var toolResults []string
 	call := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call++
@@ -51,7 +53,12 @@ func TestRunToolLoop_executesToolsThenReturnsMessages(t *testing.T) {
 
 	client := &llm.Client{BaseURL: srv.URL, Model: "test", HTTP: srv.Client()}
 	exec := &mockExecutor{}
-	messages, result, err := client.RunToolLoop(context.Background(), "system", "how do skill checks work?", exec)
+	messages, result, err := client.RunToolLoop(context.Background(), "system", "how do skill checks work?", exec, &llm.ToolLoopOptions{
+		OnThinking: func(content string) { thinking = append(thinking, content) },
+		OnToolResult: func(name, _ string, result string, _ error) {
+			toolResults = append(toolResults, name+":"+result)
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +71,9 @@ func TestRunToolLoop_executesToolsThenReturnsMessages(t *testing.T) {
 	if len(exec.calls) != 2 {
 		t.Fatalf("expected 2 tool executions, got %d: %v", len(exec.calls), exec.calls)
 	}
+	if len(toolResults) != 2 {
+		t.Fatalf("expected 2 tool results, got %d", len(toolResults))
+	}
 	if len(messages) < 4 {
 		t.Fatalf("expected expanded message history, got %d messages", len(messages))
 	}
@@ -75,7 +85,7 @@ func TestRunToolLoop_executesToolsThenReturnsMessages(t *testing.T) {
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	})
 	var out strings.Builder
-	if err := client.StreamMessages(context.Background(), messages, &out); err != nil {
+	if err := client.StreamMessages(context.Background(), messages, llm.PlainTextSink{W: &out}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "Final answer") {
