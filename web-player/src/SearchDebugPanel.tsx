@@ -11,6 +11,7 @@ function fmtScore(score: number): string {
 
 export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
   if (!debug) return null;
+  const hits = debug.hits ?? [];
 
   return (
     <details className="search-debug">
@@ -48,7 +49,7 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
           wins ties). Lower FTS rank is a stronger keyword match.
         </p>
 
-        {debug.hits.length === 0 ? (
+        {hits.length === 0 ? (
           <p className="hint">No matching sections were found.</p>
         ) : (
           <div className="search-debug-table-wrap">
@@ -63,7 +64,7 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
                 </tr>
               </thead>
               <tbody>
-                {debug.hits.map((hit) => (
+                {hits.map((hit) => (
                   <tr key={hit.section_id}>
                     <td>{hit.rank}</td>
                     <td>

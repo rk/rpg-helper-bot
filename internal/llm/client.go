@@ -225,12 +225,16 @@ func (c *Client) StreamMessages(ctx context.Context, messages []Message, sink Te
 }
 
 // CompleteWithTools sends a non-streaming chat completion with tool definitions.
-func (c *Client) CompleteWithTools(ctx context.Context, messages []Message, tools []ToolDefinition) (Message, error) {
+// When requireTools is true, the model must emit at least one tool call (first tool round).
+func (c *Client) CompleteWithTools(ctx context.Context, messages []Message, tools []ToolDefinition, requireTools bool) (Message, error) {
 	reqBody := chatRequest{
 		Model:    c.Model,
 		Messages: messages,
 		Stream:   false,
 		Tools:    tools,
+	}
+	if requireTools && len(tools) > 0 {
+		reqBody.ToolChoice = "required"
 	}
 	body, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))

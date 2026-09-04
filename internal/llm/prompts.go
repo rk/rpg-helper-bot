@@ -1,9 +1,11 @@
 package llm
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type PromptID string
@@ -137,6 +139,11 @@ func LoadPrompt(id PromptID) string {
 	return strings.TrimSpace(raw)
 }
 
+var (
+	resolvedPromptsDir string
+	resolvePromptsOnce sync.Once
+)
+
 func loadPromptRaw(id PromptID) string {
 	if envKey, ok := defaultPromptEnv[id]; ok {
 		if path := strings.TrimSpace(os.Getenv(envKey)); path != "" {
@@ -156,10 +163,45 @@ func loadPromptRaw(id PromptID) string {
 }
 
 func promptsDir() string {
+	resolvePromptsOnce.Do(func() {
+		resolvedPromptsDir = resolvePromptsDir()
+	})
+	return resolvedPromptsDir
+}
+
+func resolvePromptsDir() string {
 	if d := strings.TrimSpace(os.Getenv("RPG_HELPER_PROMPTS_DIR")); d != "" {
+		if abs, err := filepath.Abs(d); err == nil {
+			return abs
+		}
 		return d
 	}
+	candidates := []string{"prompts", filepath.Join("..", "prompts")}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "prompts"))
+	}
+	for _, dir := range candidates {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			if abs, err := filepath.Abs(dir); err == nil {
+				return abs
+			}
+			return dir
+		}
+	}
 	return "prompts"
+}
+
+// LogPromptSources logs which prompt files were found on disk at startup.
+func LogPromptSources() {
+	dir := promptsDir()
+	for id, file := range defaultPromptFiles {
+		path := filepath.Join(dir, file)
+		if _, err := os.Stat(path); err == nil {
+			log.Printf("AI prompt %s: %s", id, path)
+			continue
+		}
+		log.Printf("AI prompt %s: embedded default (missing %s)", id, path)
+	}
 }
 
 func renderPrompt(id PromptID, vars map[string]string) string {

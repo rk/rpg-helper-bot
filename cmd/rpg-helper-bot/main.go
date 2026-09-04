@@ -23,6 +23,7 @@ func main() {
 	app.LoadDotEnv()
 	ai := app.AISettingsFromEnv()
 	app.LogAISettings(ai)
+	llm.LogPromptSources()
 
 	dbPath, err := app.DBPath()
 	if err != nil {

@@ -1,11 +1,11 @@
 import { useChat } from "@ai-sdk/react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ChatSource, fetchRunning, RunningGame, ChatSearchDebug } from "./api";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { SearchDebugPanel } from "./SearchDebugPanel";
 import { SourceList } from "./SourceFlyover";
 import {
-  applyChatDataPart,
+  applyChatDataParts,
   parseSearchDebugHeader,
   parseSourcesHeader,
 } from "./sources";
@@ -22,32 +22,48 @@ export default function App() {
   const pendingSources = useRef<ChatSource[]>([]);
   const pendingSearchDebug = useRef<ChatSearchDebug | null>(null);
   const pendingActivity = useRef<ChatActivityStep[]>([]);
+  const processedStreamDataCount = useRef(0);
+  const streamDataBaseIndex = useRef(0);
+  const streamDataRef = useRef<readonly unknown[] | undefined>();
 
   const appendActivity = (step: ChatActivityStep) => {
     pendingActivity.current = [...pendingActivity.current, step];
     setChatActivity(pendingActivity.current);
   };
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
+  const streamDataHandlers = useCallback(
+    () => ({
+      onStatus: setChatStatus,
+      onActivity: appendActivity,
+      onSources: (sources: ChatSource[]) => {
+        pendingSources.current = sources;
+      },
+      onSearchDebug: (debug: ChatSearchDebug) => {
+        pendingSearchDebug.current = debug;
+      },
+    }),
+    [],
+  );
+
+  const consumeStreamData = useCallback(
+    (parts: readonly unknown[] | undefined, fromIndex: number) =>
+      applyChatDataParts(parts, streamDataHandlers(), fromIndex),
+    [streamDataHandlers],
+  );
+
+  const { messages, data: streamData, input, handleInputChange, handleSubmit, isLoading, error } =
+    useChat({
     api: "/api/chat",
     streamProtocol: "data",
     onResponse(response) {
       pendingSources.current = parseSourcesHeader(response);
       pendingSearchDebug.current = parseSearchDebugHeader(response);
     },
-    onData(dataPart) {
-      applyChatDataPart(dataPart, {
-        onStatus: setChatStatus,
-        onActivity: appendActivity,
-        onSources: (sources) => {
-          pendingSources.current = sources;
-        },
-        onSearchDebug: (debug) => {
-          pendingSearchDebug.current = debug;
-        },
-      });
-    },
     onFinish(message) {
+      processedStreamDataCount.current = consumeStreamData(
+        streamDataRef.current,
+        processedStreamDataCount.current,
+      );
       setChatStatus(null);
       if (message.role === "assistant") {
         setSourcesByMessageId((prev) => ({
@@ -66,6 +82,15 @@ export default function App() {
     },
   });
 
+  streamDataRef.current = streamData;
+
+  useEffect(() => {
+    processedStreamDataCount.current = consumeStreamData(
+      streamData,
+      processedStreamDataCount.current,
+    );
+  }, [streamData, consumeStreamData]);
+
   useEffect(() => {
     fetchRunning()
       .then((r) => setGame(r.game))
@@ -77,6 +102,8 @@ export default function App() {
     setChatStatus(null);
     setChatActivity([]);
     pendingActivity.current = [];
+    streamDataBaseIndex.current = streamDataRef.current?.length ?? 0;
+    processedStreamDataCount.current = streamDataBaseIndex.current;
     handleSubmit(e);
   };
 

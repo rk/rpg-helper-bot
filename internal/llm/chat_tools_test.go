@@ -107,7 +107,7 @@ func TestCompleteWithTools_parsesToolCalls(t *testing.T) {
 	defer srv.Close()
 
 	client := &llm.Client{BaseURL: srv.URL, Model: "test", HTTP: srv.Client()}
-	msg, err := client.CompleteWithTools(context.Background(), []llm.Message{{Role: "user", Content: "hi"}}, llm.ChatToolDefinitions())
+	msg, err := client.CompleteWithTools(context.Background(), []llm.Message{{Role: "user", Content: "hi"}}, llm.ChatToolDefinitions(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

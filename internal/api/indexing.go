@@ -217,7 +217,13 @@ func (s *Server) handleChatWithTools(ctx context.Context, stream *ChatStreamWrit
 		return false
 	}
 	if !result.ToolsUsed {
-		return false
+		if strings.TrimSpace(result.DirectContent) == "" {
+			return false
+		}
+		searchResult := &search.Result{Hits: result.SearchHits, Debug: result.Debug}
+		writeChatDataParts(stream, result.SearchHits, searchResult, true)
+		_ = stream.WriteText(result.DirectContent)
+		return true
 	}
 
 	hits := result.SearchHits

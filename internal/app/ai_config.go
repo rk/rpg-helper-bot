@@ -61,16 +61,9 @@ func AISettingsFromEnv() AISettings {
 func LogAISettings(s AISettings) {
 	log.Printf("AI chat: provider=%s model=%s url=%s", s.ChatProvider, s.ChatModel, s.ChatBaseURL)
 	log.Printf("AI embed: provider=%s model=%s url=%s", s.EmbedProvider, s.EmbedModel, s.EmbedBaseURL)
-	if d := promptsDir(); d != "" {
-		log.Printf("AI prompts dir: %s", d)
-	}
-}
-
-func promptsDir() string {
 	if d := strings.TrimSpace(os.Getenv("RPG_HELPER_PROMPTS_DIR")); d != "" {
-		return d
+		log.Printf("AI prompts dir: %s (from RPG_HELPER_PROMPTS_DIR)", d)
 	}
-	return "prompts"
 }
 
 func parseProvider(raw string, allowed ...Provider) Provider {

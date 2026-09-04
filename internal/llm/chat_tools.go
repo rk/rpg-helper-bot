@@ -24,9 +24,10 @@ type SearchToolAccumulator interface {
 
 // ChatToolsResult holds accumulated search metadata from a tool chat session.
 type ChatToolsResult struct {
-	SearchHits []models.SearchHit
-	Debug      models.ChatSearchDebug
-	ToolsUsed  bool
+	SearchHits    []models.SearchHit
+	Debug         models.ChatSearchDebug
+	ToolsUsed     bool
+	DirectContent string // set when the model answers without calling tools
 }
 
 // ErrToolsUnsupported indicates the LLM rejected tool calling.
@@ -113,7 +114,7 @@ func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage stri
 		if opts != nil && opts.OnRoundStart != nil {
 			opts.OnRoundStart(round)
 		}
-		assistant, err := c.CompleteWithTools(ctx, messages, tools)
+		assistant, err := c.CompleteWithTools(ctx, messages, tools, round == 0)
 		if err != nil {
 			if isToolsUnsupportedError(err) {
 				return nil, result, ErrToolsUnsupported
@@ -121,8 +122,11 @@ func (c *Client) RunToolLoop(ctx context.Context, systemPrompt, userMessage stri
 			return nil, result, err
 		}
 		if len(assistant.ToolCalls) == 0 {
-			if strings.TrimSpace(assistant.Content) != "" && opts != nil && opts.OnThinking != nil {
-				opts.OnThinking(strings.TrimSpace(assistant.Content))
+			if strings.TrimSpace(assistant.Content) != "" {
+				if opts != nil && opts.OnThinking != nil {
+					opts.OnThinking(strings.TrimSpace(assistant.Content))
+				}
+				result.DirectContent = strings.TrimSpace(assistant.Content)
 			}
 			collectSearchResult(executor, &result)
 			return messages, result, nil

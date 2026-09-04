@@ -39,6 +39,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
+export function applyChatDataParts(
+  parts: readonly unknown[] | undefined,
+  handlers: ChatDataPartHandlers,
+  fromIndex = 0,
+): number {
+  if (!parts?.length) {
+    return fromIndex;
+  }
+  for (let i = fromIndex; i < parts.length; i++) {
+    applyChatDataPart(parts[i], handlers);
+  }
+  return parts.length;
+}
+
 export function applyChatDataPart(dataPart: unknown, handlers: ChatDataPartHandlers): void {
   if (!isRecord(dataPart) || typeof dataPart.type !== "string") {
     return;
@@ -57,11 +71,13 @@ export function applyChatDataPart(dataPart: unknown, handlers: ChatDataPartHandl
         }
       }
       break;
-    case "sources":
-      if (Array.isArray(dataPart.sources)) {
-        handlers.onSources?.(dataPart.sources as ChatSource[]);
+    case "sources": {
+      const sources = dataPart.sources;
+      if (Array.isArray(sources)) {
+        handlers.onSources?.(sources as ChatSource[]);
       }
       break;
+    }
     case "search-debug":
       if (isRecord(dataPart.debug)) {
         handlers.onSearchDebug?.(dataPart.debug as ChatSearchDebug);
