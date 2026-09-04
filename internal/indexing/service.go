@@ -210,6 +210,22 @@ func (s *Service) RebuildCheatsheet(ctx context.Context, pdfID string) (*models.
 	return RebuildPDFCheatsheet(ctx, s.Search, s.LLM, s.Store, inputs.catalog, inputs.sections, pdfID)
 }
 
+func (s *Service) RebuildCheatsheetMissing(ctx context.Context, pdfID string) (*models.PDFIndexMeta, error) {
+	inputs, err := loadLearningsRebuildInputs(s.Store, s.ConceptsPath, pdfID)
+	if err != nil {
+		return nil, err
+	}
+	return RebuildPDFCheatsheetMissing(ctx, s.Search, s.LLM, s.Store, inputs.catalog, inputs.sections, pdfID)
+}
+
+func (s *Service) RebuildCheatsheetFeature(ctx context.Context, pdfID, featureID string) (*models.PDFIndexMeta, error) {
+	inputs, err := loadLearningsRebuildInputs(s.Store, s.ConceptsPath, pdfID)
+	if err != nil {
+		return nil, err
+	}
+	return RebuildPDFCheatsheetFeature(ctx, s.Search, s.LLM, s.Store, inputs.catalog, inputs.sections, pdfID, featureID)
+}
+
 func pageRangeKey(key pageRange) string {
 	return fmt.Sprintf("%d-%d", key.start, key.end)
 }

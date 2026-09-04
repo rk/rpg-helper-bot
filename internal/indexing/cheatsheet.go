@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/llm"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
@@ -35,23 +36,51 @@ func buildPDFCheatsheet(
 	if len(meta.Features) == 0 {
 		return meta, nil
 	}
+	return rebuildCheatsheetFeatures(ctx, searchSvc, llmClient, catalog, pdfID, sections, meta, meta.Features, progress, false)
+}
+
+func rebuildCheatsheetFeatures(
+	ctx context.Context,
+	searchSvc *search.Service,
+	llmClient *llm.Client,
+	catalog *rpgconcepts.ConceptCatalog,
+	pdfID string,
+	sections []models.TOCSection,
+	meta *models.PDFIndexMeta,
+	featureIDs []string,
+	progress cheatsheetProgress,
+	force bool,
+) (*models.PDFIndexMeta, error) {
+	if meta == nil {
+		meta = models.EmptyPDFIndexMeta()
+	}
+	if len(featureIDs) == 0 {
+		models.NormalizeIndexMeta(meta)
+		return meta, nil
+	}
 
 	sectionText := sectionTextByID(sections)
 	done := map[string]struct{}{}
-	for _, entry := range meta.Cheatsheet {
-		if id := entry.FeatureID; id != "" {
-			done[id] = struct{}{}
+	if !force {
+		for _, entry := range meta.Cheatsheet {
+			if id := entry.FeatureID; id != "" {
+				done[id] = struct{}{}
+			}
 		}
 	}
 
-	total := len(meta.Features)
-	completed := len(done)
-	for _, featureID := range meta.Features {
-		if _, ok := done[featureID]; ok {
-			continue
+	total := len(featureIDs)
+	completed := 0
+	var skipped []string
+	for _, featureID := range featureIDs {
+		if !force {
+			if _, ok := done[featureID]; ok {
+				continue
+			}
 		}
+		completed++
 		if progress.onProgress != nil {
-			progress.onProgress("cheatsheet_llm", completed+1, total, featureID)
+			progress.onProgress("cheatsheet_llm", completed, total, featureID)
 		}
 		entry, err := buildCheatsheetForFeature(ctx, searchSvc, llmClient, catalog, pdfID, featureID, meta, sectionText)
 		if err != nil {
@@ -60,10 +89,14 @@ func buildPDFCheatsheet(
 			}
 			return meta, fmt.Errorf("cheatsheet pass %s: %w", featureID, err)
 		}
-		if entry != nil {
-			meta.Cheatsheet = append(meta.Cheatsheet, *entry)
+		if entry == nil {
+			entry = catalogCheatsheetFallback(catalog, featureID)
 		}
-		completed++
+		if entry != nil {
+			upsertCheatsheetEntry(meta, *entry)
+		} else {
+			skipped = append(skipped, featureID)
+		}
 		if progress.onCheckpoint != nil {
 			progress.onCheckpoint(meta)
 		}
@@ -72,7 +105,40 @@ func buildPDFCheatsheet(
 		progress.onProgress("cheatsheet_llm", total, total, "")
 	}
 	models.NormalizeIndexMeta(meta)
+	if len(skipped) > 0 {
+		return meta, fmt.Errorf("cheatsheet entries could not be generated for: %s", strings.Join(skipped, ", "))
+	}
 	return meta, nil
+}
+
+func catalogCheatsheetFallback(catalog *rpgconcepts.ConceptCatalog, featureID string) *models.CheatsheetEntry {
+	if catalog == nil {
+		return nil
+	}
+	feat, ok := catalog.FeatureByID(featureID)
+	if !ok {
+		return nil
+	}
+	def := strings.TrimSpace(feat.Description)
+	if def == "" {
+		return nil
+	}
+	log.Printf("index: using catalog description fallback for cheatsheet feature %q", featureID)
+	return &models.CheatsheetEntry{
+		FeatureID:  featureID,
+		Definition: def,
+		Citations:  nil,
+	}
+}
+
+func upsertCheatsheetEntry(meta *models.PDFIndexMeta, entry models.CheatsheetEntry) {
+	for i, existing := range meta.Cheatsheet {
+		if existing.FeatureID == entry.FeatureID {
+			meta.Cheatsheet[i] = entry
+			return
+		}
+	}
+	meta.Cheatsheet = append(meta.Cheatsheet, entry)
 }
 
 func buildCheatsheetForFeature(
@@ -122,4 +188,21 @@ func pendingCheatsheetFeatures(meta *models.PDFIndexMeta) []string {
 		}
 	}
 	return pending
+}
+
+func featureAllowedForCheatsheetRebuild(meta *models.PDFIndexMeta, featureID string) bool {
+	if meta == nil || featureID == "" {
+		return false
+	}
+	for _, id := range meta.Features {
+		if id == featureID {
+			return true
+		}
+	}
+	for _, entry := range meta.Cheatsheet {
+		if entry.FeatureID == featureID {
+			return true
+		}
+	}
+	return false
 }

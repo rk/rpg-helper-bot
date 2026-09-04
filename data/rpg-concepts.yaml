@@ -13,10 +13,9 @@ features:
     name: Attribute
     description: "An Attribute represents a character's inherent traits, such as strength, dexterity, or intelligence."
     questions:
-      - "What are the character's attributes called?"
+      - "What are attributes called?"
       - "How are attributes used?"
       - "How are attributes gained?"
-      - "How many attributes does the character start with?"
       - "Does the character have a limit on how high their attributes can be?"
     synonyms:
       - attribute
@@ -31,6 +30,7 @@ features:
       - "What are the player characters called? Are they called PCs or something else?"
       - "Do player characters have unique features that set them apart from NPCs? If so, what are they?"
       - "Do player characters have races, ancestry, or other unique origin details? If so, what are they?"
+      - "Where do we find player character creation rules?"
     synonyms:
       - PC
       - player character
@@ -38,7 +38,7 @@ features:
       - hero
   - id: class
     name: Character Class
-    description: "A Character Class represents a character's role in the game world, such as a warrior, wizard, or rogue. Often paired with one attribute as their strong suit, and often grants skills and/or feats."
+    description: "A Character Class represents a character's role in the game world, such as a warrior, wizard, or rogue. Often paired with one attribute as their strong suit, and often grants skills and/or feats. A class is a hard constraint on the character's advancement and role in the party."
     questions:
       - "What are the character's classes called?"
       - "What do classes require to qualify the player character for the class?"
@@ -61,10 +61,9 @@ features:
       - roll
   - id: saving_throw
     name: Saving Throw
-    description: "Rolling dice to resist an effect, such as a spell or attack. Some systems use an attribute, a derived stat, or sometimes a skill check. Variance is important to document."
+    description: "Rolling dice to resist an effect, such as a spell or attack. Some systems use attribute_check, skill_check, or a derived stat."
     questions:
-      - "How do saving throws differ from skill checks?"
-      - "How are saving throws resolved, if different from skill checks?"
+      - "How are saving throws resolved?"
       - "When are saving throws used?"
     synonyms:
       - saving throw
@@ -100,7 +99,7 @@ features:
       - karma point
   - id: opposed_roll
     name: Opposed Roll
-    description: "Two characters roll against each other; higher success wins."
+    description: "Two characters roll against each other; higher success wins. Usually treated as a form of dynamic difficulty."
     questions:
       - "How do opposed rolls work?"
     synonyms:
@@ -142,18 +141,19 @@ features:
     description: "A system for determining the order of play during combat, or other turn-based encounters."
     questions:
       - "What determines the initiative order?"
-      - "How does initiative work?"
+      - "Are there ways for players to reserve their action for later?"
       - "Is initiative used for anything other than combat?"
     synonyms:
       - initiative
       - turn order
   - id: combat
     name: Combat
-    description: "A system for resolving conflicts between player characters and non-player characters (NPCs)."
+    description: "A system for resolving conflicts between player characters and non-player characters (NPCs). Usually composed of a series of rounds, in initiative order, where skill or attack rolls are used."
     questions:
-      - "How does combat work?"
-      - "Is combat resolved by simultaneous turns, or in order of initiative? (Simultaneous turns may dictate what happens during the round, and just that actions and incapacitation happen at the end.)"
       - "What are the basic rules for combat?"
+      - "How long does a combat round last?"
+      - "Are attack rolls different from skill or attribute checks?"
+      - "Is combat resolved by simultaneous turns, or in order of initiative? (Simultaneous turns may dictate what happens during the round, and just that actions and incapacitation happen at the end.)"
     synonyms:
       - combat
       - combat system

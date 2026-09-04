@@ -22,13 +22,19 @@ function newCitation(): CheatsheetCitation {
 
 type LearningsPass = "glossary" | "features" | "cheatsheet";
 
+type RebuildState =
+  | { kind: "pass"; pass: LearningsPass }
+  | { kind: "cheatsheet-missing" }
+  | { kind: "cheatsheet-feature"; featureId: string }
+  | null;
+
 export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; indexed: boolean }) {
   const { showError, showInfo } = useToast();
   const { runIndex } = useIndexing();
   const [meta, setMeta] = useState<PDFIndexMeta | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [rebuilding, setRebuilding] = useState<LearningsPass | null>(null);
+  const [rebuilding, setRebuilding] = useState<RebuildState>(null);
   const [featureInput, setFeatureInput] = useState("");
 
   const load = async () => {
@@ -114,8 +120,15 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     return data.llm_learnings_skipped || data.features.some((id) => !done.has(id));
   };
 
+  const missingCheatsheetFeatures = (data: PDFIndexMeta) => {
+    const done = cheatsheetFeatureIds(data);
+    return data.features.filter((id) => !done.has(id));
+  };
+
+  const isRebuilding = rebuilding !== null;
+
   const rerunPass = async (pass: LearningsPass, label: string) => {
-    setRebuilding(pass);
+    setRebuilding({ kind: "pass", pass });
     try {
       await runIndex(pdfId, async () => {
         if (pass === "glossary") await api.rebuildGlossary(pdfId);
@@ -132,7 +145,70 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
     }
   };
 
-  const canRerun = indexed && !dirty && rebuilding === null;
+  const applySavedMeta = (saved: PDFIndexMeta) => {
+    setMeta(saved);
+    setFeatureInput(saved.features.join(", "));
+    setDirty(false);
+  };
+
+  const rerunCheatsheetMissing = async () => {
+    setRebuilding({ kind: "cheatsheet-missing" });
+    try {
+      let saved: PDFIndexMeta | null = null;
+      await runIndex(pdfId, async () => {
+        saved = await api.rebuildCheatsheetMissing(pdfId);
+      });
+      if (saved) {
+        applySavedMeta(saved);
+      } else {
+        await load();
+      }
+      const stillMissing = saved ? missingCheatsheetFeatures(saved) : [];
+      if (stillMissing.length > 0) {
+        showError(`Still missing cheatsheet entries for: ${stillMissing.join(", ")}`);
+      } else {
+        showInfo("Missing cheatsheet entries rebuilt");
+      }
+    } catch (err) {
+      await load();
+      showError(err instanceof Error ? err.message : "Missing cheatsheet rebuild failed");
+    } finally {
+      setRebuilding(null);
+    }
+  };
+
+  const rerunCheatsheetFeature = async (featureId: string) => {
+    const id = featureId.trim();
+    if (!id) {
+      showError("Feature ID is required to retry cheatsheet entry");
+      return;
+    }
+    setRebuilding({ kind: "cheatsheet-feature", featureId: id });
+    try {
+      let saved: PDFIndexMeta | null = null;
+      await runIndex(pdfId, async () => {
+        saved = await api.rebuildCheatsheetFeature(pdfId, id);
+      });
+      if (saved) {
+        applySavedMeta(saved);
+      } else {
+        await load();
+      }
+      showInfo(`Cheatsheet entry for ${id} rebuilt`);
+    } catch (err) {
+      await load();
+      showError(err instanceof Error ? err.message : `Cheatsheet rebuild for ${id} failed`);
+    } finally {
+      setRebuilding(null);
+    }
+  };
+  const isPassRebuilding = (pass: LearningsPass) =>
+    rebuilding?.kind === "pass" && rebuilding.pass === pass;
+
+  const isFeatureRebuilding = (featureId: string) =>
+    rebuilding?.kind === "cheatsheet-feature" && rebuilding.featureId === featureId;
+
+  const canRerun = indexed && !dirty && !isRebuilding;
 
   if (loading) {
     return <p className="muted">Loading index learnings…</p>;
@@ -164,10 +240,10 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
               Cheatsheet incomplete
             </span>
           )}
-          <button type="button" className="btn" onClick={load} disabled={rebuilding !== null}>
+          <button type="button" className="btn" onClick={load} disabled={isRebuilding}>
             Reload
           </button>
-          <button type="button" className="btn primary" onClick={save} disabled={!dirty || rebuilding !== null}>
+          <button type="button" className="btn primary" onClick={save} disabled={!dirty || isRebuilding}>
             Save learnings
           </button>
         </div>
@@ -212,7 +288,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
               title={dirty ? "Save learnings before re-running" : undefined}
               onClick={() => rerunPass("glossary", "Glossary rebuild")}
             >
-              {rebuilding === "glossary" ? "Re-running…" : "Re-run LLM"}
+              {isPassRebuilding("glossary") ? "Re-running…" : "Re-run LLM"}
             </button>
             <button
               type="button"
@@ -293,7 +369,7 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
             title={dirty ? "Save learnings before re-running" : undefined}
             onClick={() => rerunPass("features", "Features rebuild")}
           >
-            {rebuilding === "features" ? "Re-running…" : "Re-run LLM"}
+            {isPassRebuilding("features") ? "Re-running…" : "Re-run LLM"}
           </button>
         </div>
         <p className="hint">Feature IDs present in this PDF. Re-run uses the saved glossary above.</p>
@@ -308,6 +384,21 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
         <div className="learnings-section-header">
           <h3>Cheatsheet</h3>
           <div className="header-actions">
+            {missingCheatsheetFeatures(meta).length > 0 && (
+              <button
+                type="button"
+                className="btn"
+                disabled={!canRerun}
+                title={
+                  dirty
+                    ? "Save learnings before re-running"
+                    : `Retry ${missingCheatsheetFeatures(meta).length} missing feature(s)`
+                }
+                onClick={rerunCheatsheetMissing}
+              >
+                {rebuilding?.kind === "cheatsheet-missing" ? "Retrying…" : "Retry missing"}
+              </button>
+            )}
             <button
               type="button"
               className="btn"
@@ -317,11 +408,11 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
                   ? "Save learnings before re-running"
                   : meta.features.length === 0
                     ? "Detect features first"
-                    : undefined
+                    : "Rebuild all cheatsheet entries from scratch"
               }
               onClick={() => rerunPass("cheatsheet", "Cheatsheet rebuild")}
             >
-              {rebuilding === "cheatsheet" ? "Re-running…" : "Re-run LLM"}
+              {isPassRebuilding("cheatsheet") ? "Re-running…" : "Re-run all"}
             </button>
             <button
               type="button"
@@ -335,6 +426,11 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
             </button>
           </div>
         </div>
+        {missingCheatsheetFeatures(meta).length > 0 && (
+          <p className="hint">
+            Missing cheatsheet entries for: {missingCheatsheetFeatures(meta).join(", ")}
+          </p>
+        )}
         {meta.cheatsheet.length === 0 ? (
           <p className="muted">No cheatsheet rows.</p>
         ) : (
@@ -348,16 +444,33 @@ export default function PDFLearningsEditor({ pdfId, indexed }: { pdfId: string; 
                     onChange={(e) => updateCheatsheet(i, { feature_id: e.target.value })}
                   />
                 </label>
-                <button
-                  type="button"
-                  className="btn icon danger"
-                  onClick={() => {
-                    setMeta({ ...meta, cheatsheet: meta.cheatsheet.filter((_, j) => j !== i) });
-                    setDirty(true);
-                  }}
-                >
-                  ×
-                </button>
+                <div className="header-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!canRerun || !row.feature_id.trim()}
+                    title={
+                      dirty
+                        ? "Save learnings before re-running"
+                        : !row.feature_id.trim()
+                          ? "Set a feature ID first"
+                          : "Re-run LLM for this feature only"
+                    }
+                    onClick={() => rerunCheatsheetFeature(row.feature_id)}
+                  >
+                    {isFeatureRebuilding(row.feature_id.trim()) ? "Retrying…" : "Retry LLM"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn icon danger"
+                    onClick={() => {
+                      setMeta({ ...meta, cheatsheet: meta.cheatsheet.filter((_, j) => j !== i) });
+                      setDirty(true);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               <label>
                 Definition

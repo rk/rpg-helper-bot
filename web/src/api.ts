@@ -217,6 +217,12 @@ export const api = {
     request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-features`, { method: "POST" }),
   rebuildCheatsheet: (id: string) =>
     request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-cheatsheet`, { method: "POST" }),
+  rebuildCheatsheetMissing: (id: string) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-cheatsheet-missing`, { method: "POST" }),
+  rebuildCheatsheetFeature: (id: string, featureId: string) =>
+    request<PDFIndexMeta>(`/api/pdfs/${id}/index-meta/rebuild-cheatsheet/${encodeURIComponent(featureId)}`, {
+      method: "POST",
+    }),
   thumbnailURL: (id: string) => `/api/pdfs/${id}/thumbnail`,
 
   listGames: (filter: "active" | "archived" | "all" = "active") =>

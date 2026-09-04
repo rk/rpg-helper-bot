@@ -176,6 +176,14 @@ func (c *Client) BuildCheatsheetFromSearchHits(ctx context.Context, catalog *rpg
 	}
 	resp.Definition = strings.TrimSpace(resp.Definition)
 	if resp.Definition == "" {
+		if def := strings.TrimSpace(feat.Description); def != "" {
+			log.Printf("llm learnings: empty cheatsheet definition for feature %q; using catalog description fallback", featureID)
+			return &models.CheatsheetEntry{
+				FeatureID:  featureID,
+				Definition: def,
+				Citations:  resp.Citations,
+			}, nil
+		}
 		return nil, nil
 	}
 	return &models.CheatsheetEntry{

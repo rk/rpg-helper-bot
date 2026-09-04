@@ -13,6 +13,8 @@ func (s *Server) registerIndexMetaRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/pdfs/{id}/index-meta/rebuild-glossary", s.handleRebuildGlossary)
 	mux.HandleFunc("POST /api/pdfs/{id}/index-meta/rebuild-features", s.handleRebuildFeatures)
 	mux.HandleFunc("POST /api/pdfs/{id}/index-meta/rebuild-cheatsheet", s.handleRebuildCheatsheet)
+	mux.HandleFunc("POST /api/pdfs/{id}/index-meta/rebuild-cheatsheet-missing", s.handleRebuildCheatsheetMissing)
+	mux.HandleFunc("POST /api/pdfs/{id}/index-meta/rebuild-cheatsheet/{featureId}", s.handleRebuildCheatsheetFeature)
 }
 
 func (s *Server) handleGetIndexMeta(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +58,43 @@ func (s *Server) handleRebuildCheatsheet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	meta, err := s.Indexer.RebuildCheatsheet(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) handleRebuildCheatsheetMissing(w http.ResponseWriter, r *http.Request) {
+	if s.Indexer == nil {
+		writeError(w, http.StatusServiceUnavailable, errServiceUnavailable("indexing"))
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := s.Store.GetPDF(id); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	meta, err := s.Indexer.RebuildCheatsheetMissing(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) handleRebuildCheatsheetFeature(w http.ResponseWriter, r *http.Request) {
+	if s.Indexer == nil {
+		writeError(w, http.StatusServiceUnavailable, errServiceUnavailable("indexing"))
+		return
+	}
+	id := r.PathValue("id")
+	featureID := r.PathValue("featureId")
+	if _, err := s.Store.GetPDF(id); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	meta, err := s.Indexer.RebuildCheatsheetFeature(r.Context(), id, featureID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
