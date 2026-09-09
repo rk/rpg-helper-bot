@@ -43,6 +43,8 @@ make run     # build, then start the server
 
 `make build` reporting "Nothing to be done" means outputs are already up to date; use `make clean && make build` to force a full rebuild.
 
+Runtime data (SQLite database, uploaded PDFs, thumbnails) lives in [`data/`](data/) relative to the repo by default. Override with `RPG_HELPER_DATA_DIR`. On first start, if `data/rpg-helper-bot.db` is missing but a legacy database exists at `~/.config/rpg-helper-bot/`, it is copied automatically.
+
 Optional: run [llama.cpp server](https://github.com/ggerganov/llama.cpp) and/or [Ollama](https://ollama.com). Copy [`.env.example`](.env.example) to `.env` to choose providers and models:
 
 ```env

@@ -41,5 +41,10 @@ web/dist/
 web-player/node_modules/
 web-player/dist/
 
+# Local runtime data (SQLite DB, uploaded PDFs, thumbnails)
+data/rpg-helper-bot.db
+data/pdfs/
+data/thumbnails/
+
 # Local test fixtures (PDFs, etc.)
 fixtures/

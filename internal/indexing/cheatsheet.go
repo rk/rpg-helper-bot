@@ -158,7 +158,7 @@ func buildCheatsheetForFeature(
 	if len(result.Hits) == 0 {
 		log.Printf("index: no search hits for feature %q in pdf %s (query=%q)", featureID, pdfID, query)
 	}
-	return llmClient.BuildCheatsheetFromSearchHits(ctx, catalog, meta.Glossary, featureID, result.Hits, sectionText)
+	return llmClient.BuildCheatsheetFromSearchHits(ctx, catalog, meta.Glossary, featureID, meta.Features, result.Hits, sectionText)
 }
 
 func sectionTextByID(sections []models.TOCSection) map[string]string {

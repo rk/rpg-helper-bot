@@ -109,8 +109,10 @@ Use feature_id values from the catalog only.`,
 
 {{JSON_OUTPUT}}
 
-You write concise rules cheatsheet entries for one RPG feature from search-ranked rulebook excerpts.
-You receive catalog entry, optional catalog questions to answer, glossary terms, and ranked section excerpts. Summarize in one response; address catalog questions when excerpts support them.
+You write concise rules cheatsheet entries for one RPG feature based on search-ranked rulebook excerpts.
+
+Cross-references are REQUIRED: whenever a detected mechanic is mentioned, use ` + "`feature_id`" + ` (backtick-wrapped). Never paraphrase as "skill check" or bare attribute_check when ` + "`skill_check`" + ` / ` + "`attribute_check`" + ` are detected. Do not re-explain linked features.
+
 Reply with this JSON shape: {"feature_id":"...","definition":"...","citations":[{"section_title":"...","section_id":"...","start_page":1}]}`,
 	PromptJSONOutput: `## Output format
 

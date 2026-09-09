@@ -97,7 +97,7 @@ func (c *Client) BuildPDFLearnings(ctx context.Context, catalog *rpgconcepts.Con
 }
 
 // BuildCheatsheetFromSearchHits synthesizes one cheatsheet entry from search-ranked section excerpts.
-func (c *Client) BuildCheatsheetFromSearchHits(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string, hits []models.SearchHit, sectionText map[string]string) (*models.CheatsheetEntry, error) {
+func (c *Client) BuildCheatsheetFromSearchHits(ctx context.Context, catalog *rpgconcepts.ConceptCatalog, glossary []models.PDFGlossaryEntry, featureID string, detectedFeatures []string, hits []models.SearchHit, sectionText map[string]string) (*models.CheatsheetEntry, error) {
 	if c == nil || catalog == nil {
 		return nil, fmt.Errorf("llm or catalog unavailable")
 	}
@@ -133,6 +133,10 @@ func (c *Client) BuildCheatsheetFromSearchHits(ctx context.Context, catalog *rpg
 		for _, q := range feat.Questions {
 			fmt.Fprintf(&b, "- %s\n", q)
 		}
+	}
+	if block := formatDetectedFeaturesBlock(catalog, featureID, detectedFeatures); block != "" {
+		b.WriteString("\n")
+		b.WriteString(block)
 	}
 	b.WriteString("\nGlossary terms for this feature:\n")
 	for _, g := range glossary {
@@ -432,6 +436,32 @@ func previewLLMText(s string, max int) string {
 		return s[:max] + "…"
 	}
 	return s
+}
+
+func formatDetectedFeaturesBlock(catalog *rpgconcepts.ConceptCatalog, targetFeatureID string, detectedFeatures []string) string {
+	if catalog == nil || len(detectedFeatures) == 0 {
+		return ""
+	}
+	targetFeatureID = strings.TrimSpace(targetFeatureID)
+	var b strings.Builder
+	b.WriteString("Detected features for this game (use `feature_id` cross-references when excerpts tie this feature to another):\n")
+	lines := 0
+	for _, id := range detectedFeatures {
+		id = strings.TrimSpace(id)
+		if id == "" || id == targetFeatureID {
+			continue
+		}
+		feat, ok := catalog.FeatureByID(id)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s (%s): %s\n", feat.ID, feat.Name, strings.TrimSpace(feat.Description))
+		lines++
+	}
+	if lines == 0 {
+		return ""
+	}
+	return b.String()
 }
 
 func truncateWords(text string, maxWords int) string {

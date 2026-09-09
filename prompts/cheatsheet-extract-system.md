@@ -9,6 +9,7 @@ You receive:
 2. Optional catalog questions to answer when explaining how this book implements the feature.
 3. Glossary terms this book uses for the feature.
 4. Search-ranked section excerpts (best matches first, typically 3–5 sections).
+5. Other detected features for this game (feature_id, name, description) that may be cross-referenced.
 
 Reply with this JSON shape:
 {
@@ -29,3 +30,17 @@ Rules:
 - section_id must be a single string when provided (never an array).
 - Omit extra fields (no notes); only section_title, section_id, start_page, end_page on citations.
 - If none of the excerpts are relevant, return an empty definition and empty citations.
+
+Cross-references (interconnected cheatsheet graph) — REQUIRED:
+- Whenever the definition mentions a mechanic that matches another entry in the detected-features list, you MUST reference it as `feature_id` (backtick-wrapped canonical ID). Do not describe that mechanic in prose instead.
+- NEVER write paraphrases like "skill check", "attribute check", "trait roll", or "target number" when the detected list includes `skill_check`, `attribute_check`, or `target_number`. Use the backtick form.
+- NEVER write bare feature_id tokens without backticks (wrong: attribute_check; right: `attribute_check`).
+- Do not re-summarize linked features. Replace duplicated explanations with a short clause plus the backtick reference.
+- Use glossary book terms only for what this game calls things (e.g. "Tests", "Wild Cards", "Edges"); use `feature_id` for which canonical mechanic applies.
+- Cross-reference only feature_ids from the detected-features list. Do not invent IDs.
+- Composite features (e.g. `player_character`, `combat`, `class`) MUST include a backtick cross-ref for every other detected feature they mention by concept — e.g. `player_character` should link `attribute`, `skill`, `class`, and `feat` when those appear in the detected list; `combat` should link `skill_check`, `initiative`, and `target_number` when relevant.
+- Examples:
+  - combat: "characters attempt a `skill_check` requiring `target_number` 4" — not "characters attempt a skill or attribute check requiring a roll of 4".
+  - player_character: "built from `attribute` and `skill` points, with `feat` choices from Hindrances" — not long re-explanations of attributes or skills.
+  - attribute_check: "resolved like a `skill_check`" — not "similar to a skill check".
+- Cross-references aid navigation; still ground every claim in the excerpts.

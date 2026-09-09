@@ -25,12 +25,16 @@ func main() {
 	app.LogAISettings(ai)
 	llm.LogPromptSources()
 
+	if err := app.MigrateLegacyDataIfNeeded(); err != nil {
+		log.Fatalf("migrate legacy data: %v", err)
+	}
+
 	dbPath, err := app.DBPath()
 	if err != nil {
-		log.Fatalf("config path: %v", err)
+		log.Fatalf("data path: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		log.Fatalf("create config dir: %v", err)
+		log.Fatalf("create data dir: %v", err)
 	}
 
 	dataDir, err := app.DataDir()
@@ -40,6 +44,7 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("create data dir: %v", err)
 	}
+	log.Printf("Data directory: %s (database: %s)", dataDir, dbPath)
 
 	sqliteStore, err := store.OpenSQLite(dbPath)
 	if err != nil {
