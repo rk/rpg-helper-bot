@@ -23,7 +23,7 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
             <dd>{debug.original_query}</dd>
           </div>
           <div>
-            <dt>Full-text keywords</dt>
+            <dt>Search query</dt>
             <dd>{debug.fts_query}</dd>
           </div>
           {debug.query_rewritten && (
@@ -39,14 +39,14 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
             </div>
           )}
           <div>
-            <dt>FTS candidates</dt>
+            <dt>Vector candidates</dt>
             <dd>{debug.fts_candidate_count}</dd>
           </div>
         </dl>
 
         <p className="hint search-debug-note">
-          Sections sent to the AI are ranked by embedding similarity, then PDF override order (higher PDF #
-          wins ties). Lower FTS rank is a stronger keyword match.
+          Sections sent to the AI are ranked by vector similarity, then PDF override order (higher PDF #
+          wins ties).
         </p>
 
         {hits.length === 0 ? (
@@ -58,8 +58,7 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
                 <tr>
                   <th>#</th>
                   <th>Section</th>
-                  <th>Embed</th>
-                  <th>FTS</th>
+                  <th>Similarity</th>
                   <th>PDF #</th>
                 </tr>
               </thead>
@@ -85,7 +84,6 @@ export function SearchDebugPanel({ debug }: SearchDebugPanelProps) {
                       </SourceFlyover>
                     </td>
                     <td>{fmtScore(hit.embed_score)}</td>
-                    <td>{fmtScore(hit.fts_rank)}</td>
                     <td>{hit.pdf_sort_order + 1}</td>
                   </tr>
                 ))}

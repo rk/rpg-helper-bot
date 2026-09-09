@@ -6,23 +6,23 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/embed"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/textutil"
+	"github.com/rpg-helper-bot/rpg-helper-bot/internal/vectors"
 )
 
 const (
-	ftsCandidateLimit = 100
-	finalResultLimit  = 10
+	vectorCandidateLimit = 100
+	finalResultLimit     = 10
 )
 
 type QueryRewriteFunc func(ctx context.Context, query, glossary string) (string, error)
 
 type Service struct {
 	Store        store.Store
-	Embed        embed.Func
+	Vectors      *vectors.Store
 	RewriteQuery QueryRewriteFunc
 	ConceptsPath string
 }
@@ -47,7 +47,7 @@ func (s *Service) Search(ctx context.Context, gameID, query string) (*Result, er
 	return s.SearchWithLimit(ctx, gameID, query, finalResultLimit)
 }
 
-// SearchWithLimit runs hybrid search and returns at most limit hits.
+// SearchWithLimit runs vector search and returns at most limit hits.
 func (s *Service) SearchWithLimit(ctx context.Context, gameID, query string, limit int) (*Result, error) {
 	query = strings.TrimSpace(query)
 	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
@@ -94,8 +94,7 @@ func (s *Service) SearchWithLimit(ctx context.Context, gameID, query string, lim
 	}, scopedSearchOpts{rewriteQuery: true}, citedSections, limit)
 }
 
-// SearchPDF runs hybrid FTS+embed search scoped to a single indexed PDF.
-// Query rewrite is skipped; callers should pass a keyword query (e.g. FeatureDefinitionQuery).
+// SearchPDF runs vector search scoped to a single indexed PDF.
 func (s *Service) SearchPDF(ctx context.Context, pdfID, query string, meta *models.PDFIndexMeta) (*Result, error) {
 	query = strings.TrimSpace(query)
 	debug := models.ChatSearchDebug{OriginalQuery: query, FTSQuery: query}
@@ -132,11 +131,13 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 	if query == "" || len(scope.pdfIDs) == 0 {
 		return &Result{Debug: debug}, nil
 	}
+	if s.Vectors == nil {
+		return &Result{Debug: debug}, nil
+	}
 
-	catalog := s.loadConceptCatalog()
-
-	ftsQuery := query
+	searchQuery := query
 	if opts.rewriteQuery && s.RewriteQuery != nil {
+		catalog := s.loadConceptCatalog()
 		glossaryBlock := ""
 		if catalog != nil && len(scope.metaByPDF) > 0 {
 			glossaryBlock = FormatGlossaryForSearchRewrite(scope.metaByPDF, scope.pdfTitle, catalog, query)
@@ -144,26 +145,15 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 		rewritten, rewriteErr := s.RewriteQuery(ctx, query, glossaryBlock)
 		if rewriteErr != nil {
 			debug.RewriteError = rewriteErr.Error()
-		} else if rewritten = strings.TrimSpace(rewritten); rewritten != "" {
-			ftsQuery = rewritten
-			debug.QueryRewritten = ftsQuery != query
-			if debug.QueryRewritten {
-				log.Printf("search: FTS query rewritten %q -> %q", query, ftsQuery)
-			}
-		}
-	}
-	debug.FTSQuery = ftsQuery
-
-	if catalog != nil && len(scope.metaByPDF) > 0 {
-		expanded := ExpandFTSWithGlossary(query, ftsQuery, scope.metaByPDF, catalog)
-		if expanded != ftsQuery {
+		} else if rewritten = strings.TrimSpace(rewritten); rewritten != "" && rewritten != query {
+			searchQuery = rewritten
 			debug.QueryRewritten = true
-			ftsQuery = expanded
-			debug.FTSQuery = ftsQuery
+			debug.FTSQuery = searchQuery
+			log.Printf("search: query expanded %q -> %q", query, searchQuery)
 		}
 	}
 
-	candidates, err := s.Store.FTSSearch(scope.pdfIDs, ftsQuery, ftsCandidateLimit)
+	candidates, err := s.Vectors.QueryScoped(ctx, searchQuery, scope.pdfIDs, vectorCandidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -172,23 +162,12 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 		return &Result{Debug: debug}, nil
 	}
 
-	queryVec, err := s.Embed(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-
-	hits := make([]models.SearchHit, 0, len(candidates))
 	type scoredHit struct {
 		hit      models.SearchHit
 		adjScore float64
 	}
 	scored := make([]scoredHit, 0, len(candidates))
 	for _, c := range candidates {
-		docVec, err := s.Embed(ctx, c.Title+"\n"+c.PlainText)
-		if err != nil {
-			continue
-		}
-		score := embed.Cosine(queryVec, docVec)
 		snippet := snippet(c.PlainText, query, 240)
 		h := models.SearchHit{
 			SectionID:    c.SectionID,
@@ -198,13 +177,12 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 			StartPage:    c.StartPage,
 			EndPage:      c.EndPage,
 			PDFSortOrder: scope.pdfOrder[c.PDFID],
-			Score:        score,
-			FTSRank:      c.Rank,
+			Score:        c.Score,
 			Snippet:      snippet,
 		}
 		scored = append(scored, scoredHit{
 			hit:      h,
-			adjScore: adjustedScore(score, c.SectionID, c.Title, c.PlainText, query, citedSections),
+			adjScore: adjustedScore(c.Score, c.SectionID, c.Title, c.PlainText, query, citedSections),
 		})
 	}
 
@@ -215,6 +193,7 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 		return scored[i].hit.PDFSortOrder > scored[j].hit.PDFSortOrder
 	})
 
+	hits := make([]models.SearchHit, 0, len(scored))
 	for _, sh := range scored {
 		hits = append(hits, sh.hit)
 	}
@@ -237,7 +216,6 @@ func (s *Service) searchScoped(ctx context.Context, query string, scope searchSc
 			EndPage:      h.EndPage,
 			PDFSortOrder: h.PDFSortOrder,
 			EmbedScore:   h.Score,
-			FTSRank:      h.FTSRank,
 			Snippet:      textutil.NormalizePDFText(h.Snippet),
 		}
 	}

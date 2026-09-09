@@ -5,13 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/embed"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
-func TestHybridSearchRespectsGameScope(t *testing.T) {
+func TestVectorSearchRespectsGameScope(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
 	s, err := store.OpenSQLite(path)
@@ -47,7 +45,9 @@ func TestHybridSearchRespectsGameScope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &search.Service{Store: s, Embed: embed.HashEmbed}
+	vs := newVectorStore(t)
+	syncVectorsFromStore(t, vs, s)
+	svc := newSearchService(t, s, vs, nil)
 	result, err := svc.Search(context.Background(), game.ID, "wild attack combat")
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestHybridSearchRespectsGameScope(t *testing.T) {
 	}
 }
 
-func TestHybridSearchUsesRewrittenFTSQuery(t *testing.T) {
+func TestVectorSearchUsesExpandedQuery(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
 	s, err := store.OpenSQLite(path)
@@ -91,30 +91,22 @@ func TestHybridSearchUsesRewrittenFTSQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &search.Service{
-		Store: s,
-		Embed: embed.HashEmbed,
-		RewriteQuery: func(ctx context.Context, query, glossary string) (string, error) {
-			return "necromancer necromancy undead", nil
-		},
-	}
+	vs := newVectorStore(t)
+	syncVectorsFromStore(t, vs, s)
+	svc := newSearchService(t, s, vs, func(ctx context.Context, query, glossary string) (string, error) {
+		return "necromancer necromancy undead", nil
+	})
 	hits, err := svc.Search(context.Background(), game.ID, "necromancer")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits.Hits) == 0 {
-		t.Fatal("expected rewritten FTS query to match necromancy section")
+		t.Fatal("expected expanded query to match necromancy section")
 	}
 	if hits.Hits[0].SectionTitle != "Dark Magic" {
 		t.Fatalf("expected dark magic section, got %q", hits.Hits[0].SectionTitle)
 	}
-
-	svcNoRewrite := &search.Service{Store: s, Embed: embed.HashEmbed}
-	noRewrite, err := svcNoRewrite.Search(context.Background(), game.ID, "necromancer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(noRewrite.Hits) != 0 {
-		t.Fatalf("expected no hits without rewrite, got %d", len(noRewrite.Hits))
+	if !hits.Debug.QueryRewritten {
+		t.Fatal("expected query rewrite to be recorded in debug")
 	}
 }

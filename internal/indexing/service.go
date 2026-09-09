@@ -92,7 +92,7 @@ func (s *Service) IndexPDF(ctx context.Context, pdfID string) (*Result, error) {
 			return nil, err
 		}
 		if s.Vectors != nil {
-			if err := s.Vectors.UpsertSection(ctx, sec.ID, pdfID, sec.Title, text); err != nil {
+			if err := s.Vectors.UpsertSection(ctx, sec.ID, pdfID, sec.Title, text, sec.StartPage, sec.EndPage); err != nil {
 				return nil, fmt.Errorf("vector index section %q: %w", sec.Title, err)
 			}
 		}
@@ -147,7 +147,7 @@ func (s *Service) RebuildVectors(ctx context.Context) error {
 		return err
 	}
 	for _, sec := range sections {
-		if err := s.Vectors.UpsertSection(ctx, sec.ID, sec.PDFID, sec.Title, sec.PlainText); err != nil {
+		if err := s.Vectors.UpsertSection(ctx, sec.ID, sec.PDFID, sec.Title, sec.PlainText, sec.StartPage, sec.EndPage); err != nil {
 			return err
 		}
 	}

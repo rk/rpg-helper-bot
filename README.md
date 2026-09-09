@@ -26,7 +26,7 @@ Implemented in the current prototype:
 
 * **PDF indexing** — `pdftotext` extraction per TOC section; plain text in SQLite FTS5 + chromem-go vector collection.
 * **Thumbnails** — first-page PNG preview (~200px) via `pdftoppm`; served at `/api/pdfs/{id}/thumbnail`.
-* **Hybrid search (Recipe 3)** — FTS5 BM25 candidates, embedding rerank (Ollama with hash fallback), PDF override order on ties.
+* **Vector search (exploratory branch)** — chromem-go nearest-neighbor retrieval over indexed section embeddings; optional LLM query expansion; heuristic rerank + PDF override order on ties.
 * **Running-game player UI** — LAN player app on port 8766 (`web-player/`).
 * **Rules Q&A chat** — Vercel AI SDK player UI; streams from `/api/chat` with llama.cpp OpenAI-compatible API (fallback when unavailable).
 * **Answer presentation** — `X-RPG-Sources` header + source list in player UI; answers cite matching sections with page ranges.

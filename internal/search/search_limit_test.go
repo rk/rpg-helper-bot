@@ -5,9 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/embed"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/store"
 )
 
@@ -51,7 +49,9 @@ func TestSearchWithLimit(t *testing.T) {
 		_ = i
 	}
 
-	svc := &search.Service{Store: s, Embed: embed.HashEmbed}
+	vs := newVectorStore(t)
+	syncVectorsFromStore(t, vs, s)
+	svc := newSearchService(t, s, vs, nil)
 	result, err := svc.SearchWithLimit(context.Background(), game.ID, "combat wild attack", 3)
 	if err != nil {
 		t.Fatal(err)

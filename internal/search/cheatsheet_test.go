@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rpg-helper-bot/rpg-helper-bot/internal/embed"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/models"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/rpgconcepts"
 	"github.com/rpg-helper-bot/rpg-helper-bot/internal/search"
@@ -61,7 +60,9 @@ func TestSearchPDF_scopedToSinglePDF(t *testing.T) {
 		}
 	}
 
-	svc := &search.Service{Store: s, Embed: embed.HashEmbed}
+	vs := newVectorStore(t)
+	syncVectorsFromStore(t, vs, s)
+	svc := newSearchService(t, s, vs, nil)
 	result, err := svc.SearchPDF(context.Background(), pdf.ID, "attribute strength vigor rules definition", nil)
 	if err != nil {
 		t.Fatal(err)
